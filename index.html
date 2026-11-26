@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SnapEat</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+:root{
+  --bg:#0b0f0e;--card:#141a18;--c2:#1b2421;--c3:#222e2a;--line:#273430;
+  --tx:#eef5f2;--hint:#879992;--ac:#3ddc97;--ac2:#2bc482;--bad:#ff6b6b;
+  --cp:#6aa8ff;--cf:#ffc15e;--cc:#c58bff;--cw:#4cc3ff;--gold:#ffb84d
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{
+  margin:0;background:var(--bg);color:var(--tx);
+  font:15px/1.42 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  padding:12px 14px calc(92px + env(safe-area-inset-bottom,0px));
+}
+button,input,select,textarea{font:inherit;color:inherit}
+.row{display:flex;align-items:center;gap:8px}.sp{justify-content:space-between}.f1{flex:1;min-width:0}
+.card{background:var(--card);border:1px solid rgba(255,255,255,.04);border-radius:22px;padding:15px;margin-top:12px;box-shadow:0 6px 24px rgba(0,0,0,.22)}
+h2{font-size:17px;margin:0 0 8px;letter-spacing:-.2px}.hint{color:var(--hint);font-size:13px}
+.logo{font-weight:900;font-size:20px;letter-spacing:-.6px;display:flex;align-items:center;gap:6px}.logo i{color:var(--ac);font-style:normal}
+.chip{border:1px solid rgba(255,255,255,.06);background:var(--c2);border-radius:20px;padding:6px 11px;font-size:13px;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:4px;transition:transform .1s}
+.chip:active{transform:scale(.96)}
+.chip.on{background:var(--ac);color:#042416;font-weight:700;border-color:transparent}
+.chip.pro{background:linear-gradient(135deg,#ffc15e,#ff7a45);color:#261000;font-weight:800;border:0}
+.x{border:0;background:none;color:var(--hint);font-size:20px;padding:4px 8px;cursor:pointer}
+
+.qbar{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px}
+.qtile{
+  border:1px solid rgba(255,255,255,.05);background:linear-gradient(180deg,var(--c2),var(--card));
+  border-radius:18px;padding:11px 6px;display:flex;flex-direction:column;align-items:center;gap:5px;
+  cursor:pointer;transition:transform .12s,border-color .15s;text-align:center
+}
+.qtile:active{transform:scale(.95);border-color:var(--ac)}
+.qtile .ico{font-size:21px;line-height:1}
+.qtile span{font-size:12px;font-weight:600;color:var(--tx)}
+
+.ring{position:relative;width:206px;height:206px;margin:0 auto}.ring svg{transform:rotate(-90deg)}
+.ring circle.v{transition:stroke-dashoffset .85s cubic-bezier(.2,.8,.2,1)}
+.mid{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.big{font-size:44px;font-weight:800;letter-spacing:-2px;line-height:1}
+.mac{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:16px}
+.bar{height:7px;border-radius:4px;background:var(--line);overflow:hidden;margin:6px 0 5px}.bar i{display:block;height:100%;border-radius:4px;transition:width .75s}
+.ent{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--line);cursor:pointer}.ent:first-of-type{border-top:0}
+.nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
+.add{border:0;background:var(--ac);color:#042416;width:34px;height:34px;border-radius:50%;font-size:21px;line-height:1;cursor:pointer;flex:none;font-weight:800;display:flex;align-items:center;justify-content:center}
+.add:active{transform:scale(.92)}
+.btn{width:100%;border:0;border-radius:15px;background:var(--ac);color:#042416;padding:13px;font-weight:700;cursor:pointer;margin-top:12px;transition:opacity .15s,transform .1s}
+.btn:active{transform:scale(.98)}.btn:disabled{opacity:.5}
+.btn.alt{background:var(--c2);color:var(--tx);font-weight:600;border:1px solid rgba(255,255,255,.05)}.btn.dn{color:var(--bad)}
+.btn.gold{background:linear-gradient(135deg,#ffc15e,#ff8547);color:#240e00;font-weight:800}
+.wb{border:0;background:var(--c2);border-radius:13px;padding:10px 14px;cursor:pointer;color:var(--cw);font-weight:700}
+.wb:active{transform:scale(.96)}
+
+nav{
+  position:fixed;left:0;right:0;bottom:0;display:flex;gap:4px;
+  background:rgba(20,26,24,.94);backdrop-filter:blur(14px);
+  border-top:1px solid var(--line);padding:7px 10px calc(7px + env(safe-area-inset-bottom,0px));z-index:4
+}
+nav button{
+  flex:1;border:0;background:none;padding:7px 2px;border-radius:14px;color:var(--hint);
+  cursor:pointer;font-weight:600;font-size:12px;display:flex;flex-direction:column;align-items:center;gap:2px
+}
+nav button .ni{font-size:18px;line-height:1.1}
+nav button.on{color:var(--ac);background:var(--c2)}
+
+#M{position:fixed;inset:0;background:rgba(0,0,0,.68);backdrop-filter:blur(4px);display:none;align-items:flex-end;z-index:6}#M.on{display:flex}
+.sheet{background:var(--bg);border-top:1px solid var(--line);width:100%;max-height:92vh;overflow:auto;border-radius:26px 26px 0 0;padding:10px 16px calc(20px + env(safe-area-inset-bottom,0px));animation:up .2s ease-out}
+@keyframes up{from{transform:translateY(40px);opacity:0}}
+.grab{width:42px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 12px}
+.seg{display:flex;background:var(--card);border-radius:13px;padding:3px;gap:3px;margin-bottom:6px;overflow-x:auto}
+.seg button{flex:1;border:0;background:none;border-radius:10px;padding:8px 6px;cursor:pointer;font-size:13px;color:var(--hint);white-space:nowrap}
+.seg button.on{background:var(--c3);color:var(--tx);font-weight:700}
+label{display:block;font-size:13px;color:var(--hint);margin:12px 0 4px}
+input,select,textarea{width:100%;border:1px solid var(--line);background:var(--card);border-radius:13px;padding:11px 12px;outline:0}
+input:focus,select:focus,textarea:focus{border-color:var(--ac)}input[type=checkbox]{width:20px;height:20px;accent-color:var(--ac)}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:10px}.g3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.step{border:0;background:var(--c2);border-radius:12px;width:46px;height:44px;font-size:20px;cursor:pointer;flex:none}
+.gi{width:76px;padding:8px;text-align:center}
+.plan{border:1px solid var(--line);background:var(--c2);border-radius:18px;padding:13px;margin-top:10px;display:flex;justify-content:space-between;align-items:center}
+.plan.feat{border:1.5px solid var(--gold);background:linear-gradient(135deg,rgba(255,193,94,.08),var(--c2))}
+.sk{border-radius:14px;background:linear-gradient(90deg,var(--card) 25%,var(--c2) 50%,var(--card) 75%);background-size:200% 100%;animation:sh 1.2s infinite}@keyframes sh{to{background-position:-200% 0}}
+.wk{display:flex;gap:6px;align-items:flex-end;height:140px;position:relative;margin-top:8px}.wk div.d{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%}.wk i{display:block;width:100%;border-radius:6px 6px 2px 2px;background:var(--ac);min-height:2px}
+.gl{position:absolute;left:0;right:0;border-top:1px dashed var(--hint);pointer-events:none}
+.badge{background:var(--cf);color:#261000;font-size:11px;font-weight:800;border-radius:8px;padding:2px 7px;vertical-align:middle}
+#T{position:fixed;left:50%;top:14px;transform:translateX(-50%);background:#eef5f2;color:#0b0f0e;padding:10px 16px;border-radius:14px;font-size:14px;font-weight:600;z-index:9;display:none;max-width:90%;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.gcard{border:1px solid var(--line);background:var(--c2);border-radius:18px;padding:13px;margin-top:12px}
+.gbtn{border:1px dashed var(--ac);background:rgba(61,220,151,.09);border-radius:12px;padding:8px 12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-weight:700;color:var(--ac)}
+.pct-big{font-size:24px;font-weight:800;color:var(--ac)}
+.refbox{background:linear-gradient(135deg,rgba(61,220,151,.12),rgba(76,195,255,.08));border:1px solid rgba(61,220,151,.25);border-radius:18px;padding:14px;margin-top:12px}
+.wsvg{width:100%;height:110px;display:block;margin-top:8px}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div id="app"></div><nav id="nav"></nav><div id="M"></div><div id="T"></div>
+<script>
+const tg=window.Telegram?.WebApp||{ready(){},expand(){},initData:'',openInvoice(){},openTelegramLink(){}};
+tg.ready();tg.expand();try{tg.setHeaderColor('#0b0f0e');tg.setBackgroundColor('#0b0f0e')}catch{}
+
+const $=s=>document.querySelector(s),r0=Math.round,esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const localIso=(d=new Date())=>{const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),dd=String(d.getDate()).padStart(2,'0');return `${y}-${m}-${dd}`};
+const parseIso=s=>{const [y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d,12,0,0)};
+const MEALS=[['breakfast','Завтрак'],['lunch','Обед'],['dinner','Ужин'],['snack','Перекус']];
+const dm=()=>{const h=new Date().getHours();return h<11?'breakfast':h<16?'lunch':h<21?'dinner':'snack'};
+
+let day=localIso(),S=null,W=null,PF=null,tab='diary',mode='',seed=0,pending=null,atab='text',am='snack',busy=false,pc0=0,mealPlan=null,lastAiInput={text:'',image:'',label_mode:false};
+
+async function api(p,m='GET',b){
+  const r=await fetch(p,{method:m,headers:{'Content-Type':'application/json','X-Init-Data':tg.initData||''},body:b?JSON.stringify(b):undefined});
+  if(!r.ok){let d='';try{d=(await r.json()).detail}catch{}throw{status:r.status,detail:typeof d==='string'?d:'Проверьте введённые данные'}}
+  return r.json();
+}
+function toast(t){const e=$('#T');e.textContent=t;e.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>e.style.display='none',3200)}
+function modal(h){$('#M').innerHTML='<div class="sheet"><div class="grab"></div>'+h+'</div>';$('#M').classList.add('on')}
+function closeM(){$('#M').classList.remove('on');pending=null}
+$('#M').onclick=e=>{if(e.target.id==='M')closeM()};
+const mac=o=>`${r0(o.kcal)} ккал · Б ${r0(o.p)} Ж ${r0(o.f)} У ${r0(o.c)}`;
+const sk=(h,m='12px 0 0')=>`<div class="sk" style="height:${h}px;margin:${m}"></div>`;
+
+async function load(){
+  if(!S)$('#app').innerHTML=sk(32,'0')+sk(74)+sk(240)+sk(90);
+  const tz=-new Date().getTimezoneOffset();
+  try{S=await api(`/api/state?day=${day}&today=${localIso()}&tz=${tz}`)}
+  catch(e){$('#app').innerHTML=`<p class="hint" style="padding:30px;text-align:center">${esc(e.detail||'Не удалось загрузить данные')}</p>`;return}
+  if(!PF)PF=S.profile?{...S.profile}:{sex:'m',age:30,height:175,weight:75,target_weight:null,act:1.375,goal:'keep',pace:.5,manual:false,remind_on:1,remind_hour:20};
+  if(!S.norm)tab='profile';
+  render();
+}
+function go(k){tab=k;if(k==='week')W=null;PF=S.profile?{...S.profile}:PF;render()}
+function render(){
+  const a=S.ai;
+  $('#nav').style.display=S.norm?'flex':'none';
+  $('#nav').innerHTML=[
+    ['diary','🥗','Дневник'],
+    ['plan','✨','Рацион'],
+    ['week','📊','Прогресс'],
+    ['profile','👤','Профиль']
+  ].map(([k,ic,l])=>`<button class="${tab===k?'on':''}" onclick="go('${k}')"><span class="ni">${ic}</span><span>${l}</span></button>`).join('');
+
+  const head=`<div class="row sp">
+    <div class="logo">Snap<i>Eat</i></div>
+    <div class="row">
+      <button class="chip" onclick="openWeightModal()" title="Записать вес">⚖️ ${S.profile?Number(S.profile.weight).toFixed(1)+' кг':'Вес'}</button>
+      <span class="chip" title="Дней подряд">🔥 ${S.streak}</span>
+      <button class="chip ${a.is_pro?'pro':''}" onclick="openPro()">${a.is_pro?'PRO · ':'ИИ · '}${a.remaining_daily_today}${a.extra_ai_credits?'+'+a.extra_ai_credits:''} ⭐</button>
+    </div>
+  </div>`;
+
+  $('#app').innerHTML=head+(tab==='diary'?diary():tab==='plan'?planV():tab==='week'?weekV():profileV());
+  if(tab==='diary')requestAnimationFrame(()=>requestAnimationFrame(()=>{const c=$('#rc');if(c)c.style.strokeDashoffset=c.dataset.to}));
+  if(tab==='week'&&!W)loadWeek();
+}
+function shift(n){
+  const d=parseIso(day);d.setDate(d.getDate()+n);
+  if(localIso(d)>localIso())return;
+  day=localIso(d);load();
+}
+const dayLabel=()=>{
+  const t=localIso(),y=localIso(new Date(Date.now()-864e5));
+  return day===t?'Сегодня':day===y?'Вчера':parseIso(day).toLocaleDateString('ru',{day:'numeric',month:'long'});
+};
+
+function diary(){
+  const n=S.norm,t=S.total,left=n.kcal-t.kcal,over=left<0,C=2*Math.PI*84,pc=Math.min(t.kcal/n.kcal,1),from=pc0;pc0=pc;
+  let h=`<div class="row" style="justify-content:center;margin-top:8px"><button class="x" onclick="shift(-1)">‹</button><b style="min-width:120px;text-align:center">${dayLabel()}</b><button class="x" onclick="shift(1)">›</button></div>
+
+  <div class="qbar">
+    <button class="qtile" onclick="openAdd(dm(),'photo')"><span class="ico">📸</span><span>Фото еды</span></button>
+    <button class="qtile" onclick="openAdd(dm(),'text')"><span class="ico">✍️</span><span>Текстом</span></button>
+    <button class="qtile" onclick="openAdd(dm(),'label')"><span class="ico">🏷️</span><span>Этикетка</span></button>
+    <button class="qtile" onclick="go('plan')"><span class="ico">✨</span><span>Меню ИИ</span></button>
+  </div>
+
+  <div class="card"><div class="ring"><svg width="206" height="206"><circle cx="103" cy="103" r="84" fill="none" stroke="var(--line)" stroke-width="14"/>
+  <circle id="rc" class="v" cx="103" cy="103" r="84" fill="none" stroke="${over?'var(--bad)':'var(--ac)'}" stroke-width="14" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C*(1-from)}" data-to="${C*(1-pc)}"/></svg>
+  <div class="mid"><div class="big" style="color:${over?'var(--bad)':'var(--tx)'}">${Math.abs(r0(left))}</div><div class="hint">${over?'ккал перебор':'ккал осталось'}</div><div style="margin-top:6px;font-weight:700">${r0(t.kcal)} / ${n.kcal}</div><div class="hint" style="font-size:12px">съедено / цель</div></div></div>
+  <div class="mac">${[['p','Белки','--cp'],['f','Жиры','--cf'],['c','Углеводы','--cc']].map(([k,l,c])=>`<div><div class="hint">${l}</div><div class="bar"><i style="width:${Math.min(t[k]/n[k]*100,100)}%;background:var(${c})"></i></div><b>${r0(t[k])} / ${n[k]} г</b><div class="hint" style="font-size:12px">${r0(t[k]/n[k]*100)}% · ${t[k]>n[k]?'+'+r0(t[k]-n[k]):'ещё '+r0(n[k]-t[k])} г</div></div>`).join('')}</div></div>`;
+
+  const wp=Math.min(S.water/S.water_goal*100,100);
+  h+=`<div class="card"><div class="row sp"><h2 style="margin:0">💧 Вода</h2><b style="color:var(--cw)">${S.water} / ${S.water_goal} мл</b></div><div class="bar" style="height:9px;margin:10px 0"><i style="width:${wp}%;background:var(--cw)"></i></div>
+  <div class="row"><button class="wb" onclick="water(250)">+250 мл</button><button class="wb" onclick="water(500)">+500 мл</button><button class="wb f1" style="color:var(--hint)" onclick="water(-250)">−250</button></div></div>`;
+
+  h+=MEALS.map(([k,l])=>{
+    const es=S.entries.filter(e=>(e.meal||'snack')===k),s={kcal:0,p:0,f:0,c:0};
+    es.forEach(e=>{for(const q in s)s[q]+=e[q]});
+    const copyBtn = !es.length ? `<button class="chip" style="font-size:12px;padding:5px 9px" onclick="copyYesterday('${k}')">↺ Как вчера</button>` : '';
+    return `<div class="card"><div class="row sp"><div class="f1"><b>${l}</b><div class="hint">${es.length?mac(s):'Пока ничего'}</div></div><div class="row">${copyBtn}<button class="add" onclick="openAdd('${k}')">+</button></div></div>`+
+    es.map(e=>`<div class="ent" onclick="openEdit(${e.id})"><div class="f1"><div class="nm">${esc(e.name)}${e.grams?', '+r0(e.grams)+' г':''}</div><div class="hint">${mac(e)}</div></div><span class="hint">✎</span></div>`).join('')+'</div>';
+  }).join('');
+
+  h+=`<div class="card"><div class="row sp"><h2 style="margin:0">Что доесть</h2><button class="chip" onclick="seed++;loadSugg()">↻ Обновить</button></div>
+  <div class="row" style="flex-wrap:wrap;margin:10px 0 4px">${[['','Все'],['protein','Больше белка'],['quick','Быстро'],['light','Лёгкое']].map(([k,l])=>`<button class="chip ${mode===k?'on':''}" onclick="mode='${k}';seed=0;loadSugg()">${l}</button>`).join('')}</div><div id="sg">${sg()}</div></div>`;
+  return h;
+}
+function sg(){
+  if(!S.suggest.length){const l=S.norm.kcal-S.total.kcal;return `<div class="hint" style="padding:6px 0">${l<0?'Норма калорий на день уже выполнена.':l<70?'Осталось меньше 70 ккал — на сегодня достаточно.':'Под этот фильтр ничего не подошло.'}</div>`}
+  const n=S.norm,t=S.total;
+  return `<div class="hint">Остаток: Б ${r0(Math.max(n.p-t.p,0))} · Ж ${r0(Math.max(n.f-t.f,0))} · У ${r0(Math.max(n.c-t.c,0))} г</div>`+S.suggest.map((s,i)=>`<div class="ent" style="cursor:default"><div class="f1"><div class="nm">${esc(s.name)}, ${s.grams} г</div><div class="hint">${mac(s)}</div></div><button class="add" onclick="addItems([S.suggest[${i}]],'suggest',dm())">+</button></div>`).join('');
+}
+async function loadSugg(){
+  $('#sg').innerHTML=sk(44,'8px 0 0')+sk(44,'8px 0 0');
+  try{S.suggest=(await api(`/api/suggest?day=${day}&mode=${mode}&seed=${seed}`)).items}catch(e){toast(e.detail)}
+  render();
+}
+async function water(ml){try{const r=await api('/api/water','POST',{day,ml});S.water=r.water;render()}catch(e){toast(e.detail)}}
+async function copyYesterday(meal){
+  const yd=parseIso(day);yd.setDate(yd.getDate()-1);
+  try{
+    const r=await api('/api/copy-meal','POST',{from_day:localIso(yd),to_day:day,meal});
+    toast(`Скопировано блюд: ${r.count}`);load();
+  }catch(e){toast(e.detail||'Вчера в это время записей не было')}
+}
+
+function openAdd(m,initialTab='text'){am=m||dm();pending=null;atab=initialTab;renderAdd()}
+function renderAdd(){
+  let h=`<div class="seg">${MEALS.map(([k,l])=>`<button class="${am===k?'on':''}" onclick="am='${k}';renderAdd()">${l}</button>`).join('')}</div>
+  <div class="seg">${[['text','✍️ Текст'],['photo','📸 Фото'],['label','🏷️ Этикетка'],['manual','⌨️ Вручную'],['fav','★ База']].map(([k,l])=>`<button class="${atab===k?'on':''}" onclick="atab='${k}';pending=null;renderAdd()">${l}</button>`).join('')}</div>`;
+  if(pending){
+    h+=`<h2 style="margin-top:12px">Распознано — проверьте вес</h2>`+(pending.length?pending.map((s,i)=>`<div class="ent" style="cursor:default"><div class="f1"><div class="nm">${esc(s.name)}</div><div class="hint" id="pi${i}">${mac(s)}</div></div><input class="gi" type="number" inputmode="decimal" value="${r0(s.grams)}" ${s.o.grams?'':'disabled'} oninput="pg(${i},this.value)"><span class="hint">г</span><button class="x" onclick="pending.splice(${i},1);renderAdd()">✕</button></div>`).join('')+`<div class="hint" id="pt" style="margin-top:8px">Итого: ${mac(psum())}</div>
+    <div class="row" style="margin-top:10px"><input id="refineInp" placeholder="Уточнить ИИ: например, без соуса или 250 г"><button class="chip on" style="padding:11px 13px" onclick="refineAI()">Пересчитать</button></div>
+    <button class="btn" onclick="addItems(pending,atab==='label'?'photo':atab,am)">Добавить в дневник</button>`:'<div class="hint" style="margin-top:8px">Еда не найдена. Опишите точнее.</div>')+`<button class="btn alt" onclick="pending=null;renderAdd()">Назад</button>`;
+  }else if(atab==='text'){
+    h+=`<label>Что вы съели? Укажите продукты и вес</label><textarea id="aiText" rows="3" placeholder="Например: овсянка на молоке 250 г, 2 варёных яйца и кофе с сахаром"></textarea><div class="hint" style="margin-top:6px">${aiLine()}</div><button class="btn" id="aiBtn" onclick="runAI('text')">Рассчитать КБЖУ</button>`;
+  }else if(atab==='photo'){
+    h+=`<label>Сфотографируйте тарелку сверху — ИИ сам определит блюда и порцию</label><input id="aiNote" placeholder="Комментарий (необязательно): например, курица жареная 200 г"><input id="file" type="file" accept="image/*" style="display:none" onchange="onPhoto(this,false)"><div class="hint" style="margin-top:6px">${aiLine()}</div><button class="btn" id="aiBtn" onclick="$('#file').click()">📸 Снять или выбрать фото</button>`;
+  }else if(atab==='label'){
+    h+=`<label>Сфотографируйте таблицу КБЖУ на упаковке товара</label><input id="aiNote" placeholder="Сколько грамм съели? (по умолчанию 100 г)"><input id="file" type="file" accept="image/*" style="display:none" onchange="onPhoto(this,true)"><div class="hint" style="margin-top:6px">ИИ считает белки, жиры, углеводы с этикетки и пересчитает на вашу порцию.</div><button class="btn" id="aiBtn" onclick="$('#file').click()">🏷️ Сканировать этикетку</button>`;
+  }else if(atab==='manual'){
+    h+=`<label>Название</label><input id="mName" placeholder="Например: Борщ домашний"><div class="g2"><div><label>Вес, г</label><input id="mG" type="number" inputmode="decimal"></div><div><label>Ккал</label><input id="mK" type="number" inputmode="decimal" placeholder="авто по БЖУ"></div></div><div class="g3"><div><label>Белки, г</label><input id="mP" type="number" inputmode="decimal"></div><div><label>Жиры, г</label><input id="mF" type="number" inputmode="decimal"></div><div><label>Углеводы, г</label><input id="mC" type="number" inputmode="decimal"></div></div><button class="btn" onclick="addManual()">Добавить</button>`;
+  }else{
+    h+=`<div class="hint" style="margin:8px 0">Добавление в 1 тап без траты ИИ-запросов:</div>`
+    +(S.favs.length?`<b style="font-size:13px;color:var(--ac)">★ Избранное</b>`+S.favs.map(f=>`<div class="ent" style="cursor:default"><div class="f1"><div class="nm">${esc(f.name)}${f.grams?', '+r0(f.grams)+' г':''}</div><div class="hint">${mac(f)}</div></div><button class="x" onclick="delFav(${f.id})">✕</button><button class="add" onclick="addFav(${f.id})">+</button></div>`).join(''):'')
+    +(S.recent?.length?`<div style="margin-top:10px"><b style="font-size:13px;color:var(--hint)">🕒 Недавние блюда</b></div>`+S.recent.map((r,idx)=>`<div class="ent" style="cursor:default"><div class="f1"><div class="nm">${esc(r.name)}${r.grams?', '+r0(r.grams)+' г':''}</div><div class="hint">${mac(r)}</div></div><button class="add" onclick="addItems([S.recent[${idx}]],'fav',am)">+</button></div>`).join(''):(!S.favs.length?'<div class="hint" style="padding:12px 0">Пока пусто.</div>':''));
+  }
+  modal(h);
+}
+const psum=()=>pending.reduce((s,i)=>({kcal:s.kcal+i.kcal,p:s.p+i.p,f:s.f+i.f,c:s.c+i.c}),{kcal:0,p:0,f:0,c:0});
+function pg(i,v){const s=pending[i],o=s.o,g=Math.max(+v||0,0),k=o.grams?g/o.grams:1;Object.assign(s,{grams:g,kcal:o.kcal*k,p:o.p*k,f:o.f*k,c:o.c*k});$('#pi'+i).textContent=mac(s);$('#pt').textContent='Итого: '+mac(psum())}
+async function addItems(items,src,meal){
+  const b=items.map(({name,grams,kcal,p,f,c})=>({name,grams:grams||0,kcal,p,f,c}));if(!b.length)return;
+  try{await api('/api/entry','POST',{day,items:b,src:['manual','text','photo','suggest','fav','copy','mealplan'].includes(src)?src:'manual',meal});closeM();toast('Добавлено: '+MEALS.find(m=>m[0]===meal)[1]);load()}catch(e){toast(e.detail||'Ошибка')}
+}
+const addFav=id=>{const f=S.favs.find(x=>x.id===id);addItems([f],'fav',am)};
+async function delFav(id){try{await api('/api/fav/'+id,'DELETE');S.favs=S.favs.filter(f=>f.id!==id);renderAdd()}catch(e){toast(e.detail)}}
+async function addManual(){
+  const v=id=>Math.max(+$(id).value||0,0),p=v('#mP'),f=v('#mF'),c=v('#mC');let k=v('#mK');if(!k)k=p*4+f*9+c*4;
+  const name=$('#mName').value.trim();if(!name)return toast('Введите название');if(!k)return toast('Укажите калории или БЖУ');
+  await addItems([{name,grams:v('#mG'),kcal:k,p,f,c}],'manual',am);
+}
+async function runAI(kind,image='',labelMode=false){
+  const text=kind==='text'?$('#aiText').value.trim():($('#aiNote')?$('#aiNote').value.trim():'');
+  if(kind==='text'&&!text)return toast('Опишите, что вы съели');
+  if(busy)return;busy=true;
+  lastAiInput={text,image,label_mode:labelMode};
+  modal(`<h2>Анализирую…</h2><div class="hint">Определяю продукты, вес и КБЖУ</div>${sk(52)}${sk(52)}${sk(52)}`);
+  try{const r=await api('/api/ai','POST',{text,image,label_mode:labelMode});S.ai=r.ai;pending=r.items.map(i=>({...i,o:{...i}}));renderAdd();render()}
+  catch(e){if(e.status===402){renderAdd();openPro('Дневной лимит ИИ исчерпан. Пополните пакет запросов или подключите Pro')}else{renderAdd();toast(e.detail||'Ошибка ИИ')}}
+  finally{busy=false}
+}
+async function refineAI(){
+  const note=$('#refineInp')?.value.trim();if(!note)return toast('Напишите уточнение');
+  if(busy)return;busy=true;
+  const prevSummary=pending.map(i=>`${i.name} ${r0(i.grams)}г`).join(', ');
+  const combined=`Было распознано: ${prevSummary}. Исходный запрос: ${lastAiInput.text}. Уточнение пользователя: ${note}`;
+  modal(`<h2>Пересчитываю…</h2><div class="hint">Учитываю ваше уточнение</div>${sk(52)}${sk(52)}`);
+  try{const r=await api('/api/ai','POST',{text:combined,image:lastAiInput.image,label_mode:lastAiInput.label_mode});S.ai=r.ai;pending=r.items.map(i=>({...i,o:{...i}}));renderAdd();render()}
+  catch(e){renderAdd();toast(e.detail||'Ошибка пересчёта')}
+  finally{busy=false}
+}
+function onPhoto(inp,labelMode=false){
+  const f=inp.files[0];if(!f)return;const img=new Image();img.onload=()=>{
+    const k=Math.min(1,1024/Math.max(img.width,img.height)),c=document.createElement('canvas');c.width=img.width*k;c.height=img.height*k;
+    c.getContext('2d').drawImage(img,0,0,c.width,c.height);URL.revokeObjectURL(img.src);runAI('photo',c.toDataURL('image/jpeg',.82).split(',')[1],labelMode);
+  };img.onerror=()=>toast('Не удалось открыть фото');img.src=URL.createObjectURL(f);
+}
+
+function openEdit(id){
+  const e=S.entries.find(x=>x.id===id);if(!e)return;
+  modal(`<h2>${esc(e.name)}</h2>${e.grams>0?`<label>Вес, г</label><div class="row"><button class="step" onclick="stp(-10,${id})">−</button><input id="eG" type="number" inputmode="decimal" value="${r0(e.grams)}" oninput="prev(${id})" style="text-align:center"><button class="step" onclick="stp(10,${id})">+</button></div>`:''}
+  <div id="ePv" class="hint" style="margin-top:10px">${mac(e)}</div><button class="btn" onclick="saveEdit(${id})">Сохранить</button>
+  <div class="g2"><button class="btn alt" onclick="favE(${id})">★ В избранное</button><button class="btn alt dn" onclick="del(${id})">Удалить</button></div>`);
+}
+function stp(d,id){const i=$('#eG');i.value=Math.max(10,(+i.value||0)+d);prev(id)}
+function prev(id){const e=S.entries.find(x=>x.id===id),g=+$('#eG').value||0,k=e.grams?g/e.grams:1;$('#ePv').textContent=mac({kcal:e.kcal*k,p:e.p*k,f:e.f*k,c:e.c*k})}
+async function saveEdit(id){
+  const e=S.entries.find(x=>x.id===id),i=$('#eG');
+  try{if(i&&+i.value>0&&r0(+i.value)!==r0(e.grams))await api('/api/entry/'+id,'PATCH',{grams:+i.value});closeM();load()}catch(x){toast(x.detail||'Ошибка')}
+}
+async function del(id){try{await api('/api/entry/'+id,'DELETE');closeM();load()}catch(e){toast(e.detail)}}
+async function favE(id){const e=S.entries.find(x=>x.id===id);try{await api('/api/fav','POST',{name:e.name,grams:e.grams,kcal:e.kcal,p:e.p,f:e.f,c:e.c});toast('Сохранено в избранное');load()}catch(x){toast(x.detail)}}
+
+function planV(){
+  const a=S.ai,n=S.norm,t=S.total;
+  const remKcal=Math.max(r0(n.kcal-t.kcal),0);
+  const accessBadge = a.is_pro
+    ? `<span class="chip pro">PRO · Безлимит</span>`
+    : (a.mealplan_credits>0 ? `<span class="chip on">Билетов: ${a.mealplan_credits}</span>` : `<span class="chip">35 ⭐ или PRO</span>`);
+
+  let h=`<div class="card">
+    <div class="row sp"><h2 style="margin:0">✨ ИИ-генератор рациона</h2>${accessBadge}</div>
+    <div class="hint" style="margin-top:6px">Персональный нутрициолог составит меню из простых продуктов строго под твой остаток КБЖУ (${remKcal>250?remKcal+' ккал':'полная норма '+n.kcal+' ккал'}).</div>
+    <label>Пожелания или продукты в холодильнике</label>
+    <input id="mpPrefs" placeholder="Например: без молочки, есть курица, гречка и яйца">
+    <button class="btn ${a.is_pro||a.mealplan_credits>0?'':'gold'}" id="mpBtn" onclick="genMealPlan()">
+      ${a.is_pro||a.mealplan_credits>0?'✨ Составить меню сейчас':'⭐ Открыть доступ (PRO или 35 ⭐)'}
+    </button>
+  </div>`;
+
+  if(mealPlan && mealPlan.meals?.length){
+    h+=`<div class="card"><div class="row sp"><h2 style="margin:0">Твой план питания</h2><button class="chip on" onclick="applyWholePlan()">+ Всё в дневник</button></div>`
+      +(mealPlan.tip?`<div class="hint" style="margin:6px 0 10px;color:var(--ac)">💡 ${esc(mealPlan.tip)}</div>`:'')
+      +mealPlan.meals.map((m,mi)=>`<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--line)">
+        <div class="row sp"><b>${esc(m.title)}</b><button class="chip" onclick="applyMealSlot(${mi})">+ В ${MEALS.find(x=>x[0]===m.meal)?.[1]?.toLowerCase()||'дневник'}</button></div>
+        ${m.items.map(it=>`<div class="ent" style="cursor:default;padding:6px 0"><div class="f1"><div class="nm">${esc(it.name)}, ${r0(it.grams)} г</div><div class="hint">${mac(it)}</div></div></div>`).join('')}
+      </div>`).join('')+`</div>`;
+  }
+  return h;
+}
+async function genMealPlan(){
+  const a=S.ai;
+  if(!a.is_pro && !(a.mealplan_credits>0)){
+    openPro('Подключи PRO или купи разовый билет на ИИ-рацион за 35 ⭐');
+    return;
+  }
+  const prefs=$('#mpPrefs')?.value.trim()||'';
+  const btn=$('#mpBtn');if(btn){btn.disabled=true;btn.textContent='Составляю рацион…'}
+  try{
+    const r=await api('/api/ai/mealplan','POST',{day,prefs});
+    mealPlan=r;S.ai=r.ai;render();toast('Персональное меню готово!');
+  }catch(e){
+    if(btn){btn.disabled=false;btn.textContent='✨ Составить меню сейчас'}
+    if(e.status===402)openPro(e.detail);else toast(e.detail||'Ошибка генерации');
+  }
+}
+async function applyMealSlot(mi){
+  const m=mealPlan.meals[mi];if(!m)return;
+  await addItems(m.items,'mealplan',m.meal);
+}
+async function applyWholePlan(){
+  if(!mealPlan?.meals)return;
+  for(const m of mealPlan.meals){
+    await api('/api/entry','POST',{day,items:m.items,src:'mealplan',meal:m.meal});
+  }
+  toast('Весь рацион добавлен в дневник!');load();
+}
+
+function openWeightModal(){
+  const curW = +(S.profile?.weight || 70);
+  modal(`<h2>⚖️ Записать вес</h2><div class="hint">Регулярные замеры строят график прогресса и автоматически обновляют твою цель в профиле.</div>
+  <label>Текущий вес, кг</label>
+  <div class="row"><button type="button" class="step" onclick="stepW(-0.2)">−</button><input id="wLogInp" type="number" step="0.1" inputmode="decimal" value="${curW.toFixed(1)}" style="text-align:center;font-weight:800;font-size:20px"><button type="button" class="step" onclick="stepW(0.2)">+</button></div>
+  <button class="btn" onclick="saveWeightLog()">Сохранить вес</button>
+  <button class="btn alt" onclick="closeM()">Отмена</button>`);
+}
+function stepW(d){const i=$('#wLogInp');if(!i)return;const v=Math.max(30,Math.min(300,(+i.value||70)+d));i.value=v.toFixed(1)}
+async function saveWeightLog(){
+  const w=+$('#wLogInp').value;if(!w||w<30||w>300)return toast('Укажите вес от 30 до 300 кг');
+  try{await api('/api/weight','POST',{day:localIso(),weight:Number(w.toFixed(1))});closeM();PF=null;toast('Вес записан!');load()}catch(e){toast(e.detail)}
+}
+
+function renderWeightChart(){
+  const wl=S.weight_log||[];
+  if(wl.length<2)return `<div class="hint" style="margin-top:8px">Запиши вес хотя бы 2 раза (кнопка ⚖️ сверху), чтобы увидеть кривую динамики.</div>`;
+  const vals=wl.map(x=>x.weight),minV=Math.min(...vals)-0.5,maxV=Math.max(...vals)+0.5,span=maxV-minV||1;
+  const pts=wl.map((x,i)=>{
+    const px=16+(i/(wl.length-1))*288;
+    const py=92-((x.weight-minV)/span)*74;
+    return `${px.toFixed(1)},${py.toFixed(1)}`;
+  }).join(' ');
+  const diff=(vals[vals.length-1]-vals[0]).toFixed(1);
+  return `<div class="row sp" style="margin-top:6px"><span class="hint">Замеров: ${wl.length}</span><b style="color:${diff<=0?'var(--ac)':'var(--cf)'}">${diff>0?'+':''}${diff} кг за период</b></div>
+  <svg class="wsvg" viewBox="0 0 320 110">
+    <polyline fill="none" stroke="var(--ac)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" points="${pts}"/>
+    ${wl.map((x,i)=>{
+      const px=16+(i/(wl.length-1))*288,py=92-((x.weight-minV)/span)*74;
+      return `<circle cx="${px}" cy="${py}" r="4" fill="var(--bg)" stroke="var(--ac)" stroke-width="2.5"/>`;
+    }).join('')}
+  </svg>
+  <div class="row sp hint" style="font-size:11px"><span>${wl[0].day.slice(5)} (${vals[0]} кг)</span><span>${wl[wl.length-1].day.slice(5)} (${vals[vals.length-1]} кг)</span></div>`;
+}
+
+async function loadWeek(){try{W=(await api('/api/week?day='+localIso())).days;if(tab==='week')render()}catch(e){toast(e.detail)}}
+function weekV(){
+  if(!W)return sk(220)+sk(120);
+  const g=S.norm.kcal,mx=Math.max(g,...W.map(d=>d.kcal))*1.1,lg=W.filter(d=>d.kcal>0),av=k=>lg.length?lg.reduce((s,d)=>s+d[k],0)/lg.length:0,diff=av('kcal')-g;
+  let h=`<div class="card"><div class="row sp"><h2 style="margin:0">⚖️ Динамика веса</h2><button class="chip on" onclick="openWeightModal()">+ Записать</button></div>${renderWeightChart()}</div>
+  <div class="card"><h2>Калории за 7 дней</h2><div class="wk"><div class="gl" style="bottom:${g/mx*100}%"></div>${W.map(d=>`<div class="d"><div class="hint" style="font-size:11px">${d.kcal?r0(d.kcal):''}</div><i style="height:${d.kcal/mx*100}%;${d.kcal>g*1.05?'background:var(--bad)':''}"></i></div>`).join('')}</div>
+  <div class="wk" style="height:auto;margin-top:6px">${W.map(d=>`<div class="d hint" style="font-size:12px">${parseIso(d.day).toLocaleDateString('ru',{weekday:'short'})}</div>`).join('')}</div><div class="hint" style="margin-top:6px">Пунктир — ваша цель, ${g} ккал</div></div>
+  <div class="card"><h2>В среднем за день</h2>${lg.length?`<div class="row sp"><div><div class="big" style="font-size:34px">${r0(av('kcal'))}</div><div class="hint">ккал · дней с записями: ${lg.length}</div></div><div style="text-align:right;color:${diff>g*.05?'var(--bad)':'var(--ac)'};font-weight:700">${diff>0?'+':''}${r0(diff)}<div class="hint">к цели в день</div></div></div>`:'<div class="hint">За эту неделю ещё нет записей.</div>'}</div>`;
+
+  if(!S.ai.is_pro)return h+`<div class="card"><div class="row sp"><h2 style="margin:0">Расширенная аналитика</h2><span class="chip">🔒 Pro</span></div><div class="hint" style="margin:8px 0 0">Баланс Б/Ж/У в процентах, количество дней в норме и самый калорийный день недели.</div><button class="btn gold" onclick="openPro()">Открыть в Pro</button></div>`;
+  if(!lg.length)return h;
+  const pk=av('p')*4,fk=av('f')*9,ck=av('c')*4,sm=pk+fk+ck||1,ok=lg.filter(d=>Math.abs(d.kcal-g)<=g*.1).length,top=lg.reduce((a,d)=>!a||d.kcal>a.kcal?d:a,null);
+  return h+`<div class="card"><div class="row sp"><h2 style="margin:0">Расширенная аналитика</h2><span class="chip pro">PRO</span></div>
+  <div class="bar" style="height:10px;display:flex;margin-top:14px"><i style="width:${pk/sm*100}%;background:var(--cp);border-radius:0"></i><i style="width:${fk/sm*100}%;background:var(--cf);border-radius:0"></i><i style="width:${ck/sm*100}%;background:var(--cc);border-radius:0"></i></div>
+  <div class="row sp hint"><span>Белки ${r0(av('p'))} г · ${r0(pk/sm*100)}%</span><span>Жиры ${r0(av('f'))} г · ${r0(fk/sm*100)}%</span><span>Углев. ${r0(av('c'))} г · ${r0(ck/sm*100)}%</span></div>
+  <div class="row sp" style="margin-top:14px"><div><div class="hint">Дней в норме (±10%)</div><b>${ok} из ${lg.length}</b></div><div style="text-align:right"><div class="hint">Самый калорийный день</div><b>${parseIso(top.day).toLocaleDateString('ru',{day:'numeric',month:'short'})} · ${top.kcal} ккал</b></div></div></div>`;
+}
+
+const sel=(id,arr,v,ch='')=>`<select id="${id}" ${ch}>${arr.map(([k,l])=>`<option value="${k}" ${String(k)===String(v)?'selected':''}>${l}</option>`).join('')}</select>`;
+function goalProgress(p){
+  const cur=+p.weight, tgt=+p.target_weight;
+  if(!cur || !tgt || cur===tgt) return null;
+  const start = +(p.start_weight || cur);
+  const totalDist = Math.abs(tgt - start);
+  let pct = totalDist > 0.05 ? (tgt < start ? ((start - cur) / (start - tgt)) * 100 : ((cur - start) / (tgt - start)) * 100) : 100;
+  const reached = (tgt < start && cur <= tgt) || (tgt > start && cur >= tgt);
+  if(reached) pct = 100;
+  return {pct: Math.max(0, Math.min(100, pct)), start, cur, tgt, remKg: Math.abs(tgt - cur), reached};
+}
+function goalCard(p){
+  const gp=goalProgress(p);
+  const tgtLabel = p.target_weight ? `${Number(p.target_weight).toFixed(1)} кг` : 'Не задана — нажмите';
+  let body = `<div class="hint" style="margin-top:8px">Укажите целевой вес, чтобы видеть процент прохождения пути.</div>`;
+  if(gp){
+    body = `<div class="row sp" style="margin-top:10px;align-items:baseline">
+      <div><span class="pct-big">${gp.pct.toFixed(0)}%</span> <span class="hint">пройдено</span></div>
+      <div class="hint" style="font-weight:700;color:${gp.reached?'var(--ac)':'var(--tx)'}">${gp.reached?'Цель достигнута!':`Осталось ${gp.remKg.toFixed(1)} кг`}</div>
+    </div>
+    <div class="bar" style="height:9px;margin:8px 0"><i style="width:${gp.pct}%;background:var(--ac)"></i></div>
+    <div class="row sp hint" style="font-size:12px"><span>Старт: ${gp.start.toFixed(1)}</span><span>Сейчас: ${gp.cur.toFixed(1)}</span><span>Цель: ${gp.tgt.toFixed(1)}</span></div>`;
+  }
+  return `<div class="gcard"><div class="row sp"><div><div class="hint">Цель по весу</div><button type="button" class="gbtn" style="margin-top:4px" onclick="openGoalModal()">🎯 ${tgtLabel} ✎</button></div><button type="button" class="chip" onclick="openGoalModal()">Изменить</button></div>${body}</div>`;
+}
+function openGoalModal(){
+  const curTw = +(PF.target_weight || PF.weight || 70);
+  modal(`<h2>Цель по весу</h2><label>Целевой вес, кг</label>
+  <div class="row"><button type="button" class="step" onclick="stepGoal(-0.5)">−</button><input id="gTwInp" type="number" step="0.1" inputmode="decimal" value="${curTw.toFixed(1)}" style="text-align:center;font-weight:700;font-size:18px"><button type="button" class="step" onclick="stepGoal(0.5)">+</button></div>
+  <div class="row" style="gap:6px;margin-top:10px;flex-wrap:wrap">${[-5,-2,-1,1,2,5].map(d=>`<button type="button" class="chip" onclick="stepGoal(${d})">${d>0?'+':''}${d} кг</button>`).join('')}</div>
+  <button type="button" class="btn" onclick="applyGoalFromModal()">Сохранить цель</button>
+  ${PF.target_weight?`<button type="button" class="btn alt dn" onclick="clearGoal()">Сбросить цель</button>`:''}
+  <button type="button" class="btn alt" onclick="closeM()">Отмена</button>`);
+}
+function stepGoal(d){const i=$('#gTwInp');if(!i)return;const v=Math.max(30,Math.min(300,(+i.value||70)+d));i.value=v.toFixed(1)}
+async function applyGoalFromModal(){
+  const v=+$('#gTwInp').value;if(!v||v<30||v>300)return toast('Укажите вес от 30 до 300 кг');
+  PF.target_weight=Number(v.toFixed(1));
+  if(PF.target_weight < PF.weight && PF.goal==='keep') PF.goal='lose';
+  if(PF.target_weight > PF.weight && PF.goal==='keep') PF.goal='gain';
+  closeM();if(S.norm){await saveProfile(true)}else{render()}
+}
+async function clearGoal(){PF.target_weight=null;closeM();if(S.norm){await saveProfile(true)}else{render()}}
+
+function shareRef(){
+  if(!S.ref_link)return toast('Ссылка скоро появится');
+  const txt=encodeURIComponent('Считаю калории по фото еды в SnapEat! Заходи по моей ссылке и получи +5 ИИ-запросов в подарок 🥗');
+  const url=encodeURIComponent(S.ref_link);
+  try{tg.openTelegramLink(`https://t.me/share/url?url=${url}&text=${txt}`)}catch{navigator.clipboard?.writeText(S.ref_link);toast('Ссылка скопирована!')}
+}
+
+function profileV(){
+  const p=PF,n=S.norm||{};
+  const refBlock = S.ref_link ? `<div class="refbox">
+    <div class="row sp"><b>🎁 Пригласи друга — +5 ИИ каждому</b><span class="chip on">Друзей: ${S.ref_count||0}</span></div>
+    <div class="hint" style="margin-top:5px">Друг получит +5 бонусных распознаваний сразу при старте, а ты — +5 запросов на баланс.</div>
+    <button type="button" class="btn" style="margin-top:10px;padding:11px" onclick="shareRef()">Поделиться ссылкой в Telegram</button>
+  </div>` : '';
+
+  return (S.norm?starsRow():'')+refBlock+`<div class="card"><h2>${S.norm?'Профиль и цели':'Расскажите о себе'}</h2><div class="hint">Норма считается по формуле Миффлина — Сан Жеора.</div>
+  ${goalCard(p)}
+  <div class="g2"><div><label>Пол</label>${sel('pSex',[['m','Мужской'],['f','Женский']],p.sex)}</div><div><label>Возраст</label><input id="pAge" type="number" inputmode="numeric" value="${p.age}"></div></div>
+  <div class="g3"><div><label>Рост, см</label><input id="pH" type="number" inputmode="decimal" value="${p.height}"></div><div><label>Вес, кг</label><input id="pW" type="number" inputmode="decimal" value="${p.weight}"></div><div><label>Цель, кг</label><input id="pTw" type="number" step="0.1" inputmode="decimal" value="${p.target_weight||''}" placeholder="—"></div></div>
+  <label>Активность</label>${sel('pAct',[[1.2,'Сидячий образ жизни'],[1.375,'Лёгкая: 1–3 тренировки в неделю'],[1.55,'Средняя: 3–5 тренировок'],[1.725,'Высокая: 6–7 тренировок'],[1.9,'Очень высокая: физический труд']],p.act)}
+  <label>Цель</label>${sel('pGoal',[['lose','Похудение'],['keep','Поддержание'],['gain','Набор массы']],p.goal,'onchange="togg()"')}
+  ${p.goal!=='keep'?`<label>Темп изменения веса</label>${sel('pPace',[[.25,'Мягко — 0,25 кг в неделю'],[.5,'Умеренно — 0,5 кг в неделю'],[.75,'Быстро — 0,75 кг в неделю'],[1,'Очень быстро — 1 кг в неделю']],p.pace)}`:''}
+
+  <div class="gcard">
+    <label class="row" style="margin:0;color:var(--tx);font-size:15px"><input id="pRemOn" type="checkbox" ${p.remind_on!==0?'checked':''}>🔔 Вечерние напоминания в Telegram</label>
+    <div class="row sp" style="margin-top:8px"><span class="hint">Время напоминания (местное)</span>${sel('pRemH',[[18,'18:00'],[19,'19:00'],[20,'20:00'],[21,'21:00'],[22,'22:00']],p.remind_hour||20)}</div>
+  </div>
+
+  <label class="row" style="margin-top:14px;color:var(--tx);font-size:15px"><input id="pMan" type="checkbox" ${p.manual?'checked':''} onchange="togg()">Свои цели КБЖУ вручную</label>
+  ${p.manual?`<div class="g2"><div><label>Ккал в день</label><input id="mK" type="number" inputmode="numeric" value="${p.kcal??n.kcal??''}"></div><div><label>Белки, г</label><input id="mP" type="number" inputmode="numeric" value="${p.p??n.p??''}"></div><div><label>Жиры, г</label><input id="mF" type="number" inputmode="numeric" value="${p.f??n.f??''}"></div><div><label>Углеводы, г</label><input id="mC" type="number" inputmode="numeric" value="${p.c??n.c??''}"></div></div>`:''}
+  ${S.norm?`<div class="hint" style="margin-top:12px">Сейчас: ${n.kcal} ккал · Б ${n.p} · Ж ${n.f} · У ${n.c} г</div>`:''}
+  <button class="btn" onclick="saveProfile()">Сохранить и пересчитать</button></div>`;
+}
+const readP=()=>({
+  sex:$('#pSex').value,age:+$('#pAge').value,height:+$('#pH').value,weight:+$('#pW').value,
+  target_weight:+$('#pTw').value||null,act:+$('#pAct').value,goal:$('#pGoal').value,
+  pace:$('#pPace')?+$('#pPace').value:(PF.pace||.5),manual:$('#pMan').checked,
+  kcal:+$('#mK')?.value||null,p:+$('#mP')?.value||null,f:+$('#mF')?.value||null,c:+$('#mC')?.value||null,
+  remind_on:$('#pRemOn')?.checked??true,remind_hour:+($('#pRemH')?.value||20)
+});
+function togg(){PF=readP();render()}
+async function saveProfile(stayOnProfile=false){
+  const b=readP();if(!b.age||!b.height||!b.weight)return toast('Заполните возраст, рост и вес');
+  if(!b.manual)b.kcal=b.p=b.f=b.c=null;
+  try{const r=await api('/api/profile','POST',b);PF=null;S=null;if(!stayOnProfile)tab='diary';await load();toast(`Норма: ${r.norm.kcal} ккал, Б ${r.norm.p} / Ж ${r.norm.f} / У ${r.norm.c}`)}catch(e){toast(e.detail)}
+}
+
+const fmtD=t=>new Date(t*1000).toLocaleDateString('ru');
+const aiTotalLeft=a=>a.remaining_daily_today+(a.extra_ai_credits||0);
+const aiLine=()=>{const a=S.ai,left=aiTotalLeft(a);return `Доступно: <b>${a.remaining_daily_today}</b> из ${a.daily_limit} сегодня${a.extra_ai_credits?` + <b>${a.extra_ai_credits}</b> куплено`:''} · <span style="color:var(--ac);cursor:pointer;font-weight:700" onclick="openPro()">${left<=0?'Пополнить ⭐':'Докупить ⭐'}</span>`};
+const starsRow=()=>{const a=S.ai;return `<div class="card row sp"><div class="f1"><b>${a.is_pro?'👑 SnapEat Pro активен':'⭐ Звёзды и Pro'}</b><div class="hint">${a.is_pro?'до '+fmtD(a.pro_until)+' · ':''}Запросов: ${a.remaining_daily_today}/${a.daily_limit}${a.extra_ai_credits?' + '+a.extra_ai_credits:''}</div></div><button class="chip pro" onclick="openPro()">Открыть</button></div>`};
+const itemCard=(x,feat=false)=>`<div class="plan ${feat?'feat':''}"><div class="f1"><b>${esc(x.title)}</b>${x.badge?` <span class="badge">${esc(x.badge)}</span>`:''}<div class="hint" style="margin-top:3px">${esc(x.desc)}</div>${x.kind==='pack'?`<div class="hint" style="color:var(--ac);margin-top:2px">${(x.price/x.credits).toFixed(2)} ⭐ за запрос</div>`:''}</div><button class="btn ${feat?'gold':''}" id="b_${x.id}" style="width:auto;margin:0 0 0 10px;padding:11px 14px" onclick="buyItem('${x.id}')">${x.price} ⭐</button></div>`;
+
+function openPro(msg=''){
+  const a=S.ai,cat=S.catalog;
+  modal(`<h2>⭐ Магазин SnapEat</h2>${msg?`<div style="color:var(--cf);margin-bottom:8px;font-weight:600">${esc(msg)}</div>`:''}
+  <div class="card" style="margin:0"><div class="g3" style="text-align:center">
+  <div><div class="big" style="font-size:26px">${a.remaining_daily_today}</div><div class="hint">сегодня из ${a.daily_limit}</div></div>
+  <div><div class="big" style="font-size:26px;color:var(--cw)">${a.extra_ai_credits}</div><div class="hint">пакет запросов</div></div>
+  <div><div class="big" style="font-size:26px;color:${a.is_pro?'var(--cf)':'var(--hint)'}">${a.is_pro?'PRO':'—'}</div><div class="hint">${a.is_pro?'до '+fmtD(a.pro_until):'базовый'}</div></div></div></div>
+
+  <h2 style="margin-top:16px">👑 Подписка SnapEat Pro</h2>
+  ${cat.filter(x=>x.kind==='pro').map(x=>itemCard(x,x.id==='pro_90d')).join('')}
+
+  <h2 style="margin-top:16px">✨ Разовые функции</h2>
+  ${cat.filter(x=>x.kind==='mealplan').map(x=>itemCard(x,false)).join('')}
+
+  <h2 style="margin-top:16px">⚡ Пакеты ИИ-запросов (не сгорают)</h2>
+  ${cat.filter(x=>x.kind==='pack').map(x=>itemCard(x,false)).join('')}
+
+  <div class="hint" style="margin-top:12px">Сначала тратится бесплатный дневной лимит, затем купленные пакеты. Оплата проходит безопасно через Telegram Stars.</div>
+  <button class="btn alt" onclick="closeM()">Закрыть</button>`);
+}
+async function buyItem(id){
+  const x=S.catalog.find(c=>c.id===id),b=$('#b_'+id),before={x:S.ai.extra_ai_credits,u:S.ai.pro_until,m:S.ai.mealplan_credits};
+  const reset=()=>{if(b){b.disabled=false;b.textContent=x.price+' ⭐'}};
+  if(b){b.disabled=true;b.textContent='…'}
+  try{
+    const r=await api('/api/billing/create-invoice','POST',{item_id:id});
+    tg.openInvoice(r.invoice_url,async st=>{
+      if(st==='paid'){closeM();toast('Оплата прошла, начисляю…');await afterPay(before,x)}
+      else{reset();if(st==='failed')toast('Платёж не прошёл. Попробуйте ещё раз');else if(st==='pending')toast('Платёж обрабатывается')}
+    });
+  }catch(e){reset();toast(e.detail||'Не удалось создать счёт')}
+}
+async function afterPay(before,x){
+  const tz=-new Date().getTimezoneOffset();
+  for(let i=0;i<8;i++){
+    try{S=await api(`/api/state?day=${day}&today=${localIso()}&tz=${tz}`)}catch{}
+    if(S.ai.extra_ai_credits!==before.x||S.ai.pro_until!==before.u||S.ai.mealplan_credits!==before.m){
+      render();toast('Покупка успешно активирована! ⭐');return;
+    }
+    await new Promise(r=>setTimeout(r,1500));
+  }
+  render();toast('Платёж получен. Баланс скоро обновится');
+}
+load();
+</script>
+</body>
+</html>
