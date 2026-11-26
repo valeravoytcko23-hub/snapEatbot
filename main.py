@@ -41,7 +41,7 @@ AI_FALLBACK_MODELS = [
     m.strip()
     for m in os.getenv(
         "AI_FALLBACK_MODELS",
-        "gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash",
+        "gemini-2.5-flash,gemini-2.5-flash-lite",
     ).split(",")
     if m.strip()
 ]
@@ -74,6 +74,38 @@ FREE_FALLBACK_4_BASE_URL = (os.getenv("FREE_FALLBACK_4_BASE_URL") or "https://op
 FREE_FALLBACK_4_MODELS = [
     m.strip()
     for m in (os.getenv("FREE_FALLBACK_4_MODELS") or os.getenv("FREE_FALLBACK_4_MODEL") or "openrouter/free").split(",")
+    if m.strip()
+]
+
+FREE_FALLBACK_5_API_KEY = (os.getenv("FREE_FALLBACK_5_API_KEY") or "").strip()
+FREE_FALLBACK_5_BASE_URL = (os.getenv("FREE_FALLBACK_5_BASE_URL") or "https://openrouter.ai/api/v1/chat/completions").strip()
+FREE_FALLBACK_5_MODELS = [
+    m.strip()
+    for m in (os.getenv("FREE_FALLBACK_5_MODELS") or os.getenv("FREE_FALLBACK_5_MODEL") or "openrouter/free").split(",")
+    if m.strip()
+]
+
+FREE_FALLBACK_6_API_KEY = (os.getenv("FREE_FALLBACK_6_API_KEY") or "").strip()
+FREE_FALLBACK_6_BASE_URL = (os.getenv("FREE_FALLBACK_6_BASE_URL") or "https://openrouter.ai/api/v1/chat/completions").strip()
+FREE_FALLBACK_6_MODELS = [
+    m.strip()
+    for m in (os.getenv("FREE_FALLBACK_6_MODELS") or os.getenv("FREE_FALLBACK_6_MODEL") or "openrouter/free").split(",")
+    if m.strip()
+]
+
+FREE_FALLBACK_7_API_KEY = (os.getenv("FREE_FALLBACK_7_API_KEY") or "").strip()
+FREE_FALLBACK_7_BASE_URL = (os.getenv("FREE_FALLBACK_7_BASE_URL") or "https://openrouter.ai/api/v1/chat/completions").strip()
+FREE_FALLBACK_7_MODELS = [
+    m.strip()
+    for m in (os.getenv("FREE_FALLBACK_7_MODELS") or os.getenv("FREE_FALLBACK_7_MODEL") or "openrouter/free").split(",")
+    if m.strip()
+]
+
+FREE_FALLBACK_8_API_KEY = (os.getenv("FREE_FALLBACK_8_API_KEY") or "").strip()
+FREE_FALLBACK_8_BASE_URL = (os.getenv("FREE_FALLBACK_8_BASE_URL") or "https://openrouter.ai/api/v1/chat/completions").strip()
+FREE_FALLBACK_8_MODELS = [
+    m.strip()
+    for m in (os.getenv("FREE_FALLBACK_8_MODELS") or os.getenv("FREE_FALLBACK_8_MODEL") or "openrouter/free").split(",")
     if m.strip()
 ]
 OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
@@ -656,6 +688,10 @@ _ALL_SECRETS = (
     FREE_FALLBACK_2_API_KEY,
     FREE_FALLBACK_3_API_KEY,
     FREE_FALLBACK_4_API_KEY,
+    FREE_FALLBACK_5_API_KEY,
+    FREE_FALLBACK_6_API_KEY,
+    FREE_FALLBACK_7_API_KEY,
+    FREE_FALLBACK_8_API_KEY,
     OPENAI_API_KEY,
     YOOKASSA_SECRET_KEY,
 )
@@ -741,6 +777,12 @@ async def _call_openai_compatible(
 ) -> str:
     if not api_key:
         raise RuntimeError(f"{provider_name}: ключ не задан")
+    clean_url = (url or "").strip().strip('"').strip("'")
+    if clean_url and not clean_url.startswith(("http://", "https://")):
+        clean_url = "https://" + clean_url.lstrip("/")
+    if not clean_url:
+        raise RuntimeError(f"{provider_name}: некорректный URL")
+
     content = []
     for p in parts:
         if "text" in p:
@@ -765,14 +807,14 @@ async def _call_openai_compatible(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    if "openrouter.ai" in url:
+    if "openrouter.ai" in clean_url:
         headers["HTTP-Referer"] = BASE_URL or "https://snapeat.app"
         headers["X-Title"] = "SnapEat"
 
     async with httpx.AsyncClient(timeout=45) as cl:
         for attempt in range(2):
             try:
-                r = await cl.post(url, headers=headers, json=payload)
+                r = await cl.post(clean_url, headers=headers, json=payload)
             except Exception as e:
                 if attempt == 1:
                     raise RuntimeError(f"{provider_name} сеть: {type(e).__name__}")
@@ -798,6 +840,10 @@ def _free_fallback_targets() -> list[tuple[str, str, str, str]]:
         ("Бесплатный резерв 2", FREE_FALLBACK_2_API_KEY, FREE_FALLBACK_2_BASE_URL, FREE_FALLBACK_2_MODELS),
         ("Бесплатный резерв 3", FREE_FALLBACK_3_API_KEY, FREE_FALLBACK_3_BASE_URL, FREE_FALLBACK_3_MODELS),
         ("Бесплатный резерв 4", FREE_FALLBACK_4_API_KEY, FREE_FALLBACK_4_BASE_URL, FREE_FALLBACK_4_MODELS),
+        ("Бесплатный резерв 5", FREE_FALLBACK_5_API_KEY, FREE_FALLBACK_5_BASE_URL, FREE_FALLBACK_5_MODELS),
+        ("Бесплатный резерв 6", FREE_FALLBACK_6_API_KEY, FREE_FALLBACK_6_BASE_URL, FREE_FALLBACK_6_MODELS),
+        ("Бесплатный резерв 7", FREE_FALLBACK_7_API_KEY, FREE_FALLBACK_7_BASE_URL, FREE_FALLBACK_7_MODELS),
+        ("Бесплатный резерв 8", FREE_FALLBACK_8_API_KEY, FREE_FALLBACK_8_BASE_URL, FREE_FALLBACK_8_MODELS),
     ]
     targets = []
     for label, key, url, models in slots:
@@ -930,7 +976,7 @@ async def _call_gemini_raw(system_prompt: str, parts: list, schema: dict, temp: 
                             if has_any_fallback:
                                 break
                             db_log("ERROR", "ai_http_error", err_txt)
-                            raise HTTPException(502, _err(err_txt))
+                            raise HTTPException(502, "ИИ временно недоступен. Попробуйте через пару минут.")
 
                         try:
                             data = r.json()
@@ -970,7 +1016,7 @@ async def _call_gemini_raw(system_prompt: str, parts: list, schema: dict, temp: 
                 last_err = f"{last_err} | OpenAI резерв: {_err(oe)}"
 
     db_log("ERROR", "ai_all_failed", primary_err or last_err)
-    raise HTTPException(502, _err(primary_err or last_err))
+    raise HTTPException(502, "ИИ временно недоступен. Попробуйте через пару минут или добавьте блюдо вручную.")
 
 
 _inflight_ai: dict[str, asyncio.Future] = {}
@@ -1000,6 +1046,27 @@ COMMON_FOOD_100G = {
     "индейка": ("Индейка филе запечённое", 135, 27.0, 2.5, 0.0),
     "сыр": ("Сыр твёрдый", 350, 25.0, 27.0, 0.0),
 }
+
+
+COMMON_FOOD_100G.update({
+    "борщ": ("Борщ с мясом", 62, 3.2, 2.8, 6.1),
+    "суп": ("Суп овощной", 48, 2.1, 1.7, 6.2),
+    "плов": ("Плов с курицей", 158, 7.5, 6.4, 17.5),
+    "макароны": ("Макароны отварные", 132, 4.3, 0.9, 26.5),
+    "паста": ("Паста отварная", 132, 4.3, 0.9, 26.5),
+    "картофель": ("Картофель отварной", 82, 2.0, 0.4, 16.7),
+    "картошка": ("Картофель отварной", 82, 2.0, 0.4, 16.7),
+    "котлета": ("Котлета куриная запечённая", 174, 18.5, 8.2, 6.4),
+    "котлеты": ("Котлеты куриные запечённые", 174, 18.5, 8.2, 6.4),
+    "рыба": ("Белая рыба запечённая", 112, 21.0, 2.8, 0.0),
+    "огурец": ("Огурец свежий", 15, 0.8, 0.1, 2.8),
+    "помидор": ("Помидор свежий", 18, 0.9, 0.2, 3.9),
+    "творожок": ("Творожок мягкий", 92, 9.5, 2.5, 7.8),
+    "молоко": ("Молоко 2.5%", 52, 2.9, 2.5, 4.7),
+    "ряженка": ("Ряженка 2.5%", 54, 3.0, 2.5, 4.2),
+    "орехи": ("Грецкий орех", 654, 15.2, 65.2, 13.7),
+    "грецкий орех": ("Грецкий орех", 654, 15.2, 65.2, 13.7),
+})
 
 
 def _try_local_food_parse(text: str, image: str, label_mode: bool):
@@ -1117,7 +1184,7 @@ async def ask_ai(text: str, image: str, label_mode: bool = False):
         except Exception as e:
             log.error("AI bad JSON (%s): %s", type(e).__name__, _err(raw[:1000]))
             db_log("ERROR", "ai_bad_json", f"{type(e).__name__}: {raw[:180]}")
-            raise HTTPException(502, _err(f"Не удалось разобрать ответ ИИ: {raw}"))
+            raise HTTPException(502, "Не удалось разобрать ответ ИИ. Попробуйте ещё раз.")
 
     res = await _run_singleflight(cache_key, _compute)
     return [dict(x) for x in res]
@@ -2037,7 +2104,6 @@ async def edit_entry(eid: int, r: EditReq, init_data: str = "", x_init_data: str
         new_f = round(e["f"] * k, 1)
         new_c = round(e["c"] * k, 1)
     else:
-        # Если вес ранее не был указан (0 г), сохраняем исходные КБЖУ, просто проставляя граммовку
         new_kcal, new_p, new_f, new_c = e["kcal"], e["p"], e["f"], e["c"]
     await arun(
         "UPDATE entries SET grams=?,kcal=?,p=?,f=?,c=? WHERE id=? AND uid=?",
@@ -2188,7 +2254,7 @@ async def create_invoice(r: InvoiceReq, init_data: str = "", x_init_data: str = 
     except Exception as e:
         log.error("create_invoice_link failed: %s", _err(e))
         await asyncio.to_thread(db_log, "ERROR", "stars_invoice_error", _err(e), tu["id"])
-        raise HTTPException(502, _err(f"Telegram: не удалось создать счёт ({type(e).__name__}: {e})"))
+        raise HTTPException(502, "Не удалось создать счёт в Telegram. Попробуйте позже.")
     return {"invoice_url": link, "item_id": r.item_id, "stars": stars_amount}
 
 
