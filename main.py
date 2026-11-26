@@ -46,7 +46,7 @@ AI_FALLBACK_MODELS = [
     m.strip()
     for m in (
         os.getenv("AI_FALLBACK_MODELS")
-        or "gemini-2.5-flash,gemini-2.5-flash-lite"
+        or "gemini-2.5-flash,gemini-2.0-flash"
     ).split(",")
     if m.strip()
 ]
@@ -753,7 +753,7 @@ _ALL_SECRETS = tuple(
     ) if s
 )
 
-CHANNEL_ID = (os.getenv("CHANNEL_ID") or CHANNEL_HANDLE).strip()
+CHANNEL_ID = (os.getenv("CHANNEL_ID") or "").strip()
 BACKUP_DIR = (os.getenv("BACKUP_DIR") or "/tmp/snapeat_backups").strip()
 BACKUP_INTERVAL_HOURS = max(1, int(os.getenv("BACKUP_INTERVAL_HOURS", "24")))
 FLOOD_WINDOW_SEC = max(1, int(os.getenv("FLOOD_WINDOW_SEC", "3")))
@@ -1179,6 +1179,64 @@ async def _run_singleflight(key: str, coro_factory):
                 _inflight_ai.pop(key, None)
 
 
+
+_LOCAL_FOOD_DB = [
+    {"keys": ["творог обезжиренный", "творог 0%", "творог 1%", "творог 2%"], "name": "Творог 2%", "kcal_100": 86, "p_100": 17.2, "f_100": 1.8, "c_100": 1.5, "default_g": 150},
+    {"keys": ["творог 9%", "творог жирный", "творог 18%"], "name": "Творог 9%", "kcal_100": 159, "p_100": 16.7, "f_100": 9.0, "c_100": 2.0, "default_g": 150},
+    {"keys": ["творог"], "name": "Творог 5%", "kcal_100": 121, "p_100": 17.0, "f_100": 5.0, "c_100": 1.8, "default_g": 150},
+    {"keys": ["куриная грудка", "филе курицы", "курица грудка"], "name": "Куриная грудка", "kcal_100": 165, "p_100": 31.0, "f_100": 3.6, "c_100": 0.0, "default_g": 150},
+    {"keys": ["индейка", "филе индейки"], "name": "Филе индейки", "kcal_100": 135, "p_100": 27.0, "f_100": 2.5, "c_100": 0.0, "default_g": 150},
+    {"keys": ["яйцо", "яйца", "яйцо варёное", "яйца варёные", "яичница", "омлет"], "name": "Яйца", "kcal_100": 155, "p_100": 13.0, "f_100": 11.0, "c_100": 1.1, "default_g": 110},
+    {"keys": ["гречка", "гречневая каша"], "name": "Гречка варёная", "kcal_100": 110, "p_100": 4.0, "f_100": 1.0, "c_100": 21.0, "default_g": 200},
+    {"keys": ["рис", "рисовая каша"], "name": "Рис варёный", "kcal_100": 130, "p_100": 2.7, "f_100": 0.3, "c_100": 28.0, "default_g": 200},
+    {"keys": ["овсянка", "овсяная каша", "геркулес"], "name": "Овсянка", "kcal_100": 88, "p_100": 3.0, "f_100": 1.7, "c_100": 15.0, "default_g": 220},
+    {"keys": ["греческий йогурт", "йогурт"], "name": "Греческий йогурт", "kcal_100": 66, "p_100": 10.0, "f_100": 2.0, "c_100": 4.0, "default_g": 200},
+    {"keys": ["кефир"], "name": "Кефир 1%", "kcal_100": 40, "p_100": 3.0, "f_100": 1.0, "c_100": 4.0, "default_g": 250},
+    {"keys": ["банан"], "name": "Банан", "kcal_100": 89, "p_100": 1.1, "f_100": 0.3, "c_100": 23.0, "default_g": 120},
+    {"keys": ["яблоко", "яблоки"], "name": "Яблоко", "kcal_100": 52, "p_100": 0.3, "f_100": 0.2, "c_100": 14.0, "default_g": 180},
+    {"keys": ["лосось", "сёмга", "семга"], "name": "Лосось", "kcal_100": 208, "p_100": 20.0, "f_100": 13.0, "c_100": 0.0, "default_g": 120},
+    {"keys": ["тунец"], "name": "Тунец", "kcal_100": 116, "p_100": 26.0, "f_100": 1.0, "c_100": 0.0, "default_g": 100},
+    {"keys": ["говядина"], "name": "Говядина", "kcal_100": 190, "p_100": 27.0, "f_100": 9.0, "c_100": 0.0, "default_g": 120},
+    {"keys": ["хлеб", "цельнозерновой хлеб", "тост"], "name": "Хлеб цельнозерновой", "kcal_100": 247, "p_100": 13.0, "f_100": 4.0, "c_100": 41.0, "default_g": 60},
+    {"keys": ["сыр"], "name": "Сыр", "kcal_100": 350, "p_100": 25.0, "f_100": 27.0, "c_100": 0.0, "default_g": 40},
+    {"keys": ["миндаль", "орехи"], "name": "Миндаль", "kcal_100": 579, "p_100": 21.0, "f_100": 50.0, "c_100": 22.0, "default_g": 30},
+    {"keys": ["авокадо"], "name": "Авокадо", "kcal_100": 160, "p_100": 2.0, "f_100": 15.0, "c_100": 9.0, "default_g": 100},
+]
+
+
+def _local_food_fallback(text: str) -> list[dict]:
+    q = (text or "").strip().lower()
+    if not q:
+        return []
+    g_match = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:г|гр|грамм|грамма|граммов|мл)\b", q)
+    grams_override = float(g_match.group(1).replace(",", ".")) if g_match else None
+    pcs_match = re.search(r"\b(\d+)\s*(?:шт|штук|штуки|яйца|яйцо|банана|банан|яблока|яблоко)\b", q)
+    pcs_count = int(pcs_match.group(1)) if pcs_match else None
+
+    for entry in _LOCAL_FOOD_DB:
+        for kw in sorted(entry["keys"], key=len, reverse=True):
+            if re.search(r"(?<![а-яёa-z0-9_])" + re.escape(kw) + r"(?![а-яёa-z0-9_])", q):
+                if grams_override and 5 <= grams_override <= 5000:
+                    g = grams_override
+                elif pcs_count and pcs_count > 0:
+                    unit_g = 55.0 if "яйц" in kw else (120.0 if "банан" in kw else (180.0 if "яблок" in kw else entry["default_g"]))
+                    g = min(5000.0, unit_g * pcs_count)
+                else:
+                    g = float(entry["default_g"])
+                ratio = g / 100.0
+                return [
+                    Item(
+                        name=entry["name"],
+                        grams=g,
+                        kcal=entry["kcal_100"] * ratio,
+                        p=entry["p_100"] * ratio,
+                        f=entry["f_100"] * ratio,
+                        c=entry["c_100"] * ratio,
+                    ).model_dump()
+                ]
+    return []
+
+
 async def ask_ai(text: str, image: str, label_mode: bool = False):
     prepared_img = split_image(image) if image else None
     img_hash = hashlib.sha256(prepared_img[1].encode()).hexdigest()[:16] if prepared_img else ""
@@ -1221,14 +1279,28 @@ async def ask_ai(text: str, image: str, label_mode: bool = False):
                 }
             },
         }
-        raw = await _call_gemini_raw(PROMPT_FOOD, parts, schema, temp=0.2)
+        try:
+            raw = await _call_gemini_raw(PROMPT_FOOD, parts, schema, temp=0.2)
+        except HTTPException:
+            local_items = _local_food_fallback(text) if not prepared_img else []
+            if local_items:
+                log.info("Using local nutrition fallback for query: %s", _err(text[:100]))
+                _cache_set(cache_key, local_items)
+                return local_items
+            raise
         try:
             obj = _extract_json_obj(raw)
             items = obj.get("items") or []
             parsed = [Item(**i).model_dump() for i in items if isinstance(i, dict)][:15]
+            if not parsed and not prepared_img:
+                parsed = _local_food_fallback(text)
             _cache_set(cache_key, parsed)
             return parsed
         except Exception as e:
+            local_items = _local_food_fallback(text) if not prepared_img else []
+            if local_items:
+                _cache_set(cache_key, local_items)
+                return local_items
             log.error("AI bad JSON (%s): %s", type(e).__name__, _err(raw[:1000]))
             await adb_log("ERROR", "ai_bad_json", f"{type(e).__name__}: {raw[:180]}")
             raise HTTPException(502, "Не удалось разобрать ответ ИИ. Попробуйте ещё раз.")
@@ -1641,12 +1713,10 @@ _pending_chat_food: dict[str, dict] = {}
 
 
 async def _check_user_in_channel(uid: int) -> bool:
-    target_chat = (CHANNEL_ID or CHANNEL_HANDLE or "").strip()
-    if not target_chat:
+    if not CHANNEL_ID:
         return False
-    chat_arg: int | str = int(target_chat) if target_chat.lstrip("-").isdigit() else target_chat
     try:
-        member = await bot.get_chat_member(chat_id=chat_arg, user_id=uid)
+        member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=uid)
         status_val = getattr(member, "status", "")
         return status_val in ("creator", "administrator", "member", "restricted")
     except Exception:
