@@ -1066,8 +1066,11 @@ async def state(day: str = "", today: str = "", tz: int = 180, x_init_data: str 
     prof = {k: u[k] for k in ("sex", "age", "height", "weight", "start_weight", "act", "goal", "target_weight", "pace", "manual", "remind_hour", "remind_on")} if has else None
     w = run("SELECT ml FROM water WHERE uid=? AND day=?", (u["id"], day))
     recent = run(
-        "SELECT name, grams, kcal, p, f, c, MAX(ts) as last_ts FROM entries WHERE uid=? "
-        "GROUP BY name, ROUND(grams) ORDER BY last_ts DESC LIMIT 25",
+        "SELECT name, grams, kcal, p, f, c, last_ts FROM ("
+        "SELECT DISTINCT ON (name, ROUND(grams)) name, grams, kcal, p, f, c, ts AS last_ts "
+        "FROM entries WHERE uid=? "
+        "ORDER BY name, ROUND(grams), ts DESC"
+        ") sub ORDER BY last_ts DESC LIMIT 25",
         (u["id"],),
     )
     weight_log = run("SELECT day, weight FROM weights WHERE uid=? ORDER BY day DESC LIMIT 30", (u["id"],))
