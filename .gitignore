@@ -1,35 +1,32 @@
-#Byte-compiled / optimized / DLL files
+# Python / кэш / виртуальные окружения
 __pycache__/
 *.py[cod]
 *$py.class
-#Virtual environments
-venv/
+*.egg-info/
+.eggs/
+build/
+dist/
 .venv/
+venv/
 env/
+
+# Локальные переменные окружения и секреты
 .env
 .env.*
 !.env.example
-#IDE and editor files
-.vscode/
-.idea/
-*.swp
-*.swo
-.DS_Store
-#Database / local temporary files
-*.db
+
+# Локальные снапшоты бэкапов и временные файлы проекта
+snapeat_backups/
+*.zip
+*.log
 *.sqlite
 *.sqlite3
-*.log
-# Temporary files / bot media / local data
-tmp/
-temp/
-media/
-downloads/
-*.tmp
-*.bak
+*.db
 
-# Testing / build
-.pytest_cache/
-.coverage
-build/
-dist/
+# Редакторы, ОС и системные файлы
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
