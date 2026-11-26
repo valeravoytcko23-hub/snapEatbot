@@ -1,4 +1,4 @@
-import os, json, hmac, hashlib, time, threading, re, logging, random, uuid, asyncio, base64
+import os, json, hmac, hashlib, html, time, threading, re, logging, random, uuid, asyncio, base64
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -12,7 +12,7 @@ from psycopg_pool import ConnectionPool
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart, Command
 from aiogram.types import (
@@ -20,8 +20,12 @@ from aiogram.types import (
     InlineKeyboardButton, WebAppInfo, LabeledPrice, MenuButtonWebApp
 )
 
-BOT_TOKEN = os.environ["BOT_TOKEN"]
-DATABASE_URL = os.environ["DATABASE_URL"].strip()
+BOT_TOKEN = (os.getenv("BOT_TOKEN") or "").strip()
+DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
+if not BOT_TOKEN:
+    raise RuntimeError("Missing required environment variable: BOT_TOKEN")
+if not DATABASE_URL:
+    raise RuntimeError("Missing required environment variable: DATABASE_URL")
 BASE_URL = (os.getenv("WEBAPP_URL") or os.getenv("RENDER_EXTERNAL_URL") or "").rstrip("/")
 ADMIN_IDS = {
     int(x.strip())
@@ -382,7 +386,15 @@ def init_db():
     run("CREATE INDEX IF NOT EXISTS ix_support_requests_status ON support_requests(status, created_at DESC)")
 
 
-init_db()
+for _db_attempt in range(5):
+    try:
+        init_db()
+        break
+    except Exception as _db_err:
+        if _db_attempt == 4:
+            raise
+        log.warning("Database init retry %d/5: %s", _db_attempt + 1, _db_err)
+        time.sleep(2.0)
 
 
 def _normalize_username(raw_username: str) -> str:
@@ -607,6 +619,21 @@ class Item(BaseModel):
     p: float = Field(0, ge=0, le=500)
     f: float = Field(0, ge=0, le=500)
     c: float = Field(0, ge=0, le=1000)
+
+    @model_validator(mode="after")
+    def _normalize_item(self):
+        self.name = re.sub(r"\s+", " ", self.name.strip())
+        if not self.name:
+            raise ValueError("Название продукта не может быть пустым")
+        self.grams = round(float(self.grams or 0), 1)
+        self.p = round(float(self.p or 0), 1)
+        self.f = round(float(self.f or 0), 1)
+        self.c = round(float(self.c or 0), 1)
+        k = float(self.kcal or 0)
+        if k <= 0 and (self.p > 0 or self.f > 0 or self.c > 0):
+            k = min(5000.0, self.p * 4.0 + self.f * 9.0 + self.c * 4.0)
+        self.kcal = round(k, 1)
+        return self
 
 
 _ALL_SECRETS = (
@@ -1575,7 +1602,7 @@ async def on_paid(m: Message):
     elif it["kind"] == "mealplan":
         text = "🥗 Оплачен персональный ИИ-рацион! Открой вкладку «Рацион» в приложении, чтобы сгенерировать меню."
     else:
-        text = f"👑 SnapEat Pro активен до {datetime.fromtimestamp(u['pro_until']):%d.%m.%Y}. Спасибо!"
+        text = f"👑 SnapEat Pro активен до {datetime.fromtimestamp(u['pro_until'], tz=timezone.utc):%d.%m.%Y}. Спасибо!"
     try:
         await m.answer(text)
     except Exception as e:
@@ -1682,7 +1709,13 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 async def webhook(secret: str, req: Request):
     if not WH_SECRET or not hmac.compare_digest(secret or "", WH_SECRET) or not hmac.compare_digest(req.headers.get("X-Telegram-Bot-Api-Secret-Token") or "", WH_SECRET):
         raise HTTPException(403)
-    await dp.feed_update(bot, Update.model_validate(await req.json(), context={"bot": bot}))
+    try:
+        payload = await req.json()
+        upd = Update.model_validate(payload, context={"bot": bot})
+    except Exception as e:
+        log.warning("Invalid Telegram webhook payload: %s", _err(e))
+        return {"ok": False, "ignored": True}
+    await dp.feed_update(bot, upd)
     return {"ok": True}
 
 
@@ -1739,9 +1772,9 @@ async def state(day: str = "", today: str = "", tz: int = 180, x_init_data: str 
     w = run("SELECT ml FROM water WHERE uid=? AND day=?", (u["id"], day))
     recent = run(
         "SELECT name, grams, kcal, p, f, c, last_ts FROM ("
-        "SELECT DISTINCT ON (name, ROUND(grams)) name, grams, kcal, p, f, c, ts AS last_ts "
+        "SELECT DISTINCT ON (name, ROUND(COALESCE(grams, 0)::numeric)) name, grams, kcal, p, f, c, ts AS last_ts "
         "FROM entries WHERE uid=? "
-        "ORDER BY name, ROUND(grams), ts DESC"
+        "ORDER BY name, ROUND(COALESCE(grams, 0)::numeric), ts DESC"
         ") sub ORDER BY last_ts DESC LIMIT 25",
         (u["id"],),
     )
@@ -1760,7 +1793,7 @@ async def state(day: str = "", today: str = "", tz: int = 180, x_init_data: str 
         "suggest": suggest(rem) if has else [],
         "water": w[0]["ml"] if w else 0,
         "water_goal": water_goal(u["weight"], u.get("workouts_per_week") or 0),
-        "streak": calc_streak(u["id"], date.today().isoformat()),
+        "streak": calc_streak(u["id"], norm_day(today) if today else date.today().isoformat()),
         "favs": run("SELECT * FROM favs WHERE uid=? ORDER BY id DESC LIMIT 40", (u["id"],)),
         "recent": recent,
         "weight_log": weight_log,
@@ -1882,7 +1915,7 @@ async def save_profile(p: Profile, x_init_data: str = Header(default="")):
                 ai_note = tuned.get("note") or ""
                 n = {"kcal": tuned["kcal"], "p": tuned["p"], "f": tuned["f"], "c": tuned["c"]}
 
-    start_w = cur_u.get("start_weight") or (p.weight if p.target_weight else None)
+    start_w = (cur_u.get("start_weight") or p.weight) if p.target_weight else None
     clean_name = _sanitize_name(p.name or "", cur_u.get("name") or tu.get("first_name") or "")
     run(
         "UPDATE users SET name=?,sex=?,age=?,height=?,weight=?,start_weight=?,act=?,goal=?,"
@@ -2000,7 +2033,7 @@ async def add_water(r: WaterReq, x_init_data: str = Header(default="")):
 @app.post("/api/fav")
 async def add_fav(it: Item, x_init_data: str = Header(default="")):
     tu = auth(x_init_data)
-    if not run("SELECT id FROM favs WHERE uid=? AND name=? AND ROUND(grams)=ROUND(?)", (tu["id"], it.name, it.grams)):
+    if not run("SELECT id FROM favs WHERE uid=? AND name=? AND ROUND(COALESCE(grams,0)::numeric)=ROUND(?::numeric)", (tu["id"], it.name, it.grams)):
         run("INSERT INTO favs(uid,name,grams,kcal,p,f,c) VALUES(?,?,?,?,?,?,?)",
             (tu["id"], it.name, it.grams, it.kcal, it.p, it.f, it.c))
     return {"ok": True}
@@ -2206,8 +2239,9 @@ async def yookassa_webhook(req: Request):
     event_type = event.get("event")
     obj = event.get("object") or {}
     payment_id = obj.get("id")
-    if not isinstance(payment_id, str) or not payment_id.strip():
+    if not isinstance(payment_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", payment_id.strip()):
         return {"ok": True, "ignored": True}
+    payment_id = payment_id.strip()
 
     if event_type != "payment.succeeded":
         return {"ok": True, "event": event_type}
@@ -2232,7 +2266,7 @@ async def yookassa_webhook(req: Request):
         raise HTTPException(502, "Payment verification failed")
 
     verified = verify_resp.json()
-    if verified.get("status") != "succeeded":
+    if verified.get("status") != "succeeded" or verified.get("paid") is False:
         return {"ok": True, "status": verified.get("status")}
 
     meta = verified.get("metadata") or {}
@@ -2272,7 +2306,7 @@ async def yookassa_webhook(req: Request):
             elif it["kind"] == "mealplan":
                 msg = f"✅ Оплата ({int(amt_val)} ₽) прошла! Начислен 1 билет на ИИ-рацион во вкладке «Рацион»."
             else:
-                msg = f"👑 Оплата ({int(amt_val)} ₽) прошла! SnapEat Pro активен до {datetime.fromtimestamp(u['pro_until']):%d.%m.%Y}."
+                msg = f"👑 Оплата ({int(amt_val)} ₽) прошла! SnapEat Pro активен до {datetime.fromtimestamp(u['pro_until'], tz=timezone.utc):%d.%m.%Y}."
             await bot.send_message(uid, msg)
         except Exception as e:
             log.warning("YooKassa payment credited, notify failed: %s", _err(e))
@@ -2585,7 +2619,7 @@ async def admin_update_request(req_id: int, r: AdminRequestUpdate, x_init_data: 
         try:
             await bot.send_message(
                 int(sr["uid"]),
-                f"💬 <b>Ответ поддержки SnapEat</b> (по обращению #{req_id}):\n\n{reply_txt}",
+                f"💬 <b>Ответ поддержки SnapEat</b> (по обращению #{req_id}):\n\n{html.escape(reply_txt)}",
                 parse_mode="HTML",
             )
             sent_ok = True
@@ -2626,6 +2660,7 @@ async def admin_prune_logs_now(x_init_data: str = Header(default="")):
 
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+STATIC_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @app.get("/health")
