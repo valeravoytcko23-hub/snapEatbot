@@ -10,7 +10,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from aiogram import Bot, Dispatcher, F
@@ -89,6 +89,8 @@ YOOKASSA_RETURN_URL = (
 YOOKASSA_API_BASE = "https://api.yookassa.ru/v3"
 SUPPORT_HANDLE = "@snapeat_manager"
 SUPPORT_URL = "https://t.me/snapeat_manager"
+CHANNEL_HANDLE = "@snapeat_app"
+CHANNEL_URL = "https://t.me/snapeat_app"
 
 _ai_sem = asyncio.Semaphore(AI_CONCURRENCY)
 _ai_cache: dict[str, tuple[float, object]] = {}
@@ -1442,15 +1444,19 @@ async def on_start(m: Message):
         rows_kb.append([InlineKeyboardButton(text="🥗 Открыть дневник", web_app=WebAppInfo(url=BASE_URL))])
         if m.from_user.id in ADMIN_IDS:
             rows_kb.append([InlineKeyboardButton(text="🛡️ Админ-панель", web_app=WebAppInfo(url=f"{BASE_URL}/admin"))])
+    rows_kb.append([InlineKeyboardButton(text="📢 Канал SnapEat", url=CHANNEL_URL)])
     rows_kb.append([InlineKeyboardButton(text=f"💬 Поддержка ({SUPPORT_HANDLE})", url=SUPPORT_URL)])
     kb = InlineKeyboardMarkup(inline_keyboard=rows_kb)
     bonus_txt = "\n🎁 По приглашению друга тебе уже начислено +5 бонусных ИИ-запросов!" if ref_id else ""
     await m.answer(
         "Привет! Я <b>SnapEat</b> — умный дневник питания и КБЖУ.\n\n"
         "📸 Фотографируй еду или этикетки, пиши текстом или выбирай из базы — я сам посчитаю калории, белки, жиры и углеводы.\n"
-        f"Бесплатный пробный лимит — <b>{FREE_MONTHLY_LIMIT} ИИ-запросов в месяц</b> и <b>{FREE_MEALPLAN_LIMIT} бесплатный рацион</b>. Вопросы и оплата: {SUPPORT_HANDLE}"
+        f"Бесплатный пробный лимит — <b>{FREE_MONTHLY_LIMIT} ИИ-запросов в месяц</b> и <b>{FREE_MEALPLAN_LIMIT} бесплатный рацион</b>.\n\n"
+        f"📢 Хочешь следить за новостями, обновлениями и продвижением проекта? Подпишись на канал (по желанию): <a href=\"{CHANNEL_URL}\">{CHANNEL_HANDLE}</a>\n"
+        f"💬 Вопросы и оплата: {SUPPORT_HANDLE}"
         f"{bonus_txt}",
         parse_mode="HTML",
+        disable_web_page_preview=True,
         reply_markup=kb,
     )
 
@@ -1663,9 +1669,18 @@ async def lifespan(app):
 app = FastAPI(lifespan=lifespan)
 
 
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    if isinstance(exc, HTTPException):
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    log.error("Unhandled error on %s %s: %s", request.method, request.url.path, _err(exc))
+    db_log("ERROR", "unhandled_http_error", f"{request.method} {request.url.path}: {_err(exc)}")
+    return JSONResponse(status_code=500, content={"detail": "Внутренняя ошибка сервера. Попробуйте ещё раз."})
+
+
 @app.post("/webhook/{secret}")
 async def webhook(secret: str, req: Request):
-    if secret != WH_SECRET or req.headers.get("X-Telegram-Bot-Api-Secret-Token") != WH_SECRET:
+    if not WH_SECRET or not hmac.compare_digest(secret or "", WH_SECRET) or not hmac.compare_digest(req.headers.get("X-Telegram-Bot-Api-Secret-Token") or "", WH_SECRET):
         raise HTTPException(403)
     await dp.feed_update(bot, Update.model_validate(await req.json(), context={"bot": bot}))
     return {"ok": True}
@@ -1753,6 +1768,7 @@ async def state(day: str = "", today: str = "", tz: int = 180, x_init_data: str 
         "ref_count": u.get("ref_count") or 0,
         "catalog": CATALOG_LIST,
         "support": {"handle": SUPPORT_HANDLE, "url": SUPPORT_URL},
+        "channel": {"handle": CHANNEL_HANDLE, "url": CHANNEL_URL},
     }
 
 
