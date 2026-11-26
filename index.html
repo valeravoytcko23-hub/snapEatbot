@@ -1,0 +1,1323 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>SnapEat — Дневник питания и КБЖУ</title>
+  <style>
+    :root {
+      --bg: #0b0f0e;
+      --card: #141a18;
+      --card2: #1b2421;
+      --card3: #222e2a;
+      --border: rgba(255, 255, 255, 0.065);
+      --border-strong: rgba(61, 220, 151, 0.24);
+      --text: #eef5f2;
+      --muted: #879992;
+      --accent: #3ddc97;
+      --accent-soft: rgba(61, 220, 151, 0.14);
+      --accent-ink: #042416;
+      --gold: #ffb84d;
+      --gold-soft: rgba(255, 184, 77, 0.15);
+      --danger: #ff6b6b;
+      --danger-soft: rgba(255, 107, 107, 0.15);
+      --cw: #4cc3ff;
+      --radius-lg: 22px;
+      --radius-md: 16px;
+      --radius-sm: 12px;
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, Inter, sans-serif;
+      font-size: 14px;
+      line-height: 1.42;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    .wrap {
+      max-width: 540px;
+      margin: 0 auto;
+      padding: 12px 14px calc(94px + env(safe-area-inset-bottom, 0px));
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 15px;
+      margin-bottom: 12px;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+    }
+
+    .card-emerald {
+      background: linear-gradient(165deg, rgba(61, 220, 151, 0.11), rgba(20, 26, 24, 0.96) 58%);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-lg);
+      padding: 15px;
+      margin-bottom: 12px;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.26);
+    }
+
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .row-tight {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .f1 {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .title {
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: -0.3px;
+      margin: 0;
+    }
+
+    .h3 {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: -0.2px;
+      margin: 0 0 6px;
+    }
+
+    .sub {
+      font-size: 12.5px;
+      color: var(--muted);
+      margin: 3px 0 0;
+      line-height: 1.38;
+    }
+
+    .logo {
+      font-size: 19px;
+      font-weight: 900;
+      letter-spacing: -0.4px;
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+    }
+
+    .logo span {
+      color: var(--accent);
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      font-size: 11.5px;
+      font-weight: 700;
+      background: var(--card2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      white-space: nowrap;
+      text-decoration: none;
+      cursor: pointer;
+      transition: transform 0.12s ease, background 0.15s ease, border-color 0.15s ease;
+    }
+
+    .pill:active {
+      transform: scale(0.96);
+    }
+
+    .pill.accent {
+      background: var(--accent-soft);
+      border-color: rgba(61, 220, 151, 0.32);
+      color: var(--accent);
+    }
+
+    .pill.pro {
+      background: linear-gradient(135deg, #ffc15e, #ff8547);
+      border: 0;
+      color: #240e00;
+      font-weight: 800;
+    }
+
+    .pill.gold {
+      background: var(--gold-soft);
+      border-color: rgba(255, 184, 77, 0.35);
+      color: var(--gold);
+    }
+
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .kpi {
+      background: var(--card2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 10px 6px;
+      text-align: center;
+    }
+
+    .kpi .val {
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: -0.3px;
+    }
+
+    .kpi .lbl {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    .macro-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .macro-pill {
+      background: var(--card2);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 8px 10px;
+    }
+
+    .macro-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11.5px;
+      color: var(--muted);
+      margin-bottom: 5px;
+    }
+
+    .macro-top b {
+      color: var(--text);
+      font-size: 12.5px;
+    }
+
+    .mini-bar {
+      height: 5px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .mini-bar > i {
+      display: block;
+      height: 100%;
+      border-radius: 999px;
+      transition: width 0.25s ease;
+    }
+
+    .bar {
+      width: 100%;
+      height: 9px;
+      background: var(--card2);
+      border-radius: 999px;
+      overflow: hidden;
+      margin-top: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.04);
+    }
+
+    .bar > i {
+      display: block;
+      height: 100%;
+      background: linear-gradient(90deg, #2bc480, var(--accent));
+      border-radius: 999px;
+      transition: width 0.3s ease;
+    }
+
+    .btn {
+      width: 100%;
+      border: 0;
+      border-radius: var(--radius-md);
+      padding: 12px 15px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      background: var(--accent);
+      color: var(--accent-ink);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      text-decoration: none;
+      transition: transform 0.12s ease, opacity 0.15s ease, filter 0.15s ease;
+    }
+
+    .btn:active {
+      transform: scale(0.98);
+    }
+
+    .btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .btn.secondary {
+      background: var(--card2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      font-weight: 600;
+    }
+
+    .btn.gold {
+      background: linear-gradient(135deg, #ffc15e, #ff8547);
+      color: #240e00;
+      font-weight: 800;
+    }
+
+    .btn.danger {
+      background: var(--danger-soft);
+      color: var(--danger);
+      border: 1px solid rgba(255, 107, 107, 0.28);
+    }
+
+    .btn.sm {
+      width: auto;
+      padding: 8px 12px;
+      font-size: 12.5px;
+      border-radius: var(--radius-sm);
+    }
+
+    input, select, textarea {
+      width: 100%;
+      background: var(--card2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      font-size: 14px;
+      outline: none;
+      margin-top: 6px;
+      font-family: inherit;
+      transition: border-color 0.15s ease;
+    }
+
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--accent);
+    }
+
+    label {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 10px;
+      font-weight: 500;
+    }
+
+    .meal-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 11px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .meal-item:last-child {
+      border-bottom: 0;
+      padding-bottom: 2px;
+    }
+
+    .meal-name {
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .meal-meta {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    .chips {
+      display: flex;
+      gap: 7px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+
+    .chip {
+      border: 1px solid var(--border);
+      background: var(--card2);
+      color: var(--text);
+      border-radius: 999px;
+      padding: 7px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.12s ease, background 0.15s ease;
+    }
+
+    .chip:active {
+      transform: scale(0.96);
+    }
+
+    .chip.on {
+      background: var(--accent);
+      color: var(--accent-ink);
+      border-color: transparent;
+      font-weight: 800;
+    }
+
+    .tariff {
+      background: var(--card2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 13px;
+      margin-top: 10px;
+    }
+
+    .tariff.featured {
+      border-color: rgba(255, 184, 77, 0.42);
+      background: linear-gradient(160deg, rgba(255, 184, 77, 0.08), var(--card2) 55%);
+    }
+
+    .goal-ring-box {
+      background: var(--card2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 13px;
+      margin-top: 10px;
+    }
+
+    .weight-stats-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-top: 10px;
+      text-align: center;
+    }
+
+    .weight-stat {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 8px 6px;
+    }
+
+    .weight-stat .w-lbl {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .weight-stat .w-val {
+      font-size: 14px;
+      font-weight: 800;
+      margin-top: 2px;
+    }
+
+    .nav {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(20, 26, 24, 0.94);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-around;
+      padding: 7px 8px calc(8px + env(safe-area-inset-bottom, 0px));
+      z-index: 40;
+    }
+
+    .nav button {
+      flex: 1;
+      max-width: 120px;
+      background: none;
+      border: 0;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      padding: 6px 8px;
+      border-radius: 14px;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      transition: background 0.15s ease, color 0.15s ease, transform 0.12s ease;
+    }
+
+    .nav button:active {
+      transform: scale(0.95);
+    }
+
+    .nav button.active {
+      color: var(--accent);
+      background: var(--accent-soft);
+    }
+
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 84px;
+      transform: translateX(-50%);
+      background: #eef5f2;
+      color: #0b0f0e;
+      padding: 10px 15px;
+      border-radius: 14px;
+      font-size: 13px;
+      font-weight: 700;
+      z-index: 99;
+      max-width: 92vw;
+      text-align: center;
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+      display: none;
+    }
+
+    .loader {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 16px;
+      text-align: center;
+      color: var(--muted);
+      gap: 10px;
+    }
+
+    .spinner {
+      width: 26px;
+      height: 26px;
+      border: 3px solid rgba(61, 220, 151, 0.2);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .err-box {
+      border-color: rgba(255, 107, 107, 0.35);
+      background: rgba(255, 107, 107, 0.08);
+    }
+
+    .err-title {
+      color: var(--danger);
+      font-weight: 800;
+      font-size: 16px;
+      margin: 0 0 6px;
+    }
+
+    .err-details {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      background: rgba(0, 0, 0, 0.35);
+      padding: 10px 12px;
+      border-radius: 12px;
+      color: #e2ece8;
+      word-break: break-word;
+      margin: 10px 0 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap" id="app">
+    <div class="card">
+      <div class="loader">
+        <div class="spinner"></div>
+        <div>Загрузка SnapEat...</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="nav" id="nav" style="display:none;">
+    <button data-tab="today" class="active" onclick="setTab('today')"><span>🥗</span><span>Сегодня</span></button>
+    <button data-tab="add" onclick="setTab('add')"><span>➕</span><span>Еда и ИИ</span></button>
+    <button data-tab="plan" onclick="setTab('plan')"><span>✨</span><span>Рацион</span></button>
+    <button data-tab="profile" onclick="setTab('profile')"><span>👤</span><span>Профиль</span></button>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const SUPPORT_USERNAME = "@snapeat_manager";
+    const SUPPORT_LINK = "https://t.me/snapeat_manager";
+
+    let S = null;
+    let TAB = "today";
+    let SELECTED_DAY = new Date().toISOString().slice(0, 10);
+    let SELECTED_MEAL = "snack";
+    let AI_PREVIEW = [];
+    let MEALPLAN_DATA = null;
+    let LAST_ERROR = null;
+    let SHOW_FULL_PROFILE_FORM = false;
+
+    function initTelegramSdk() {
+      const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+      if (!tg) return null;
+      try {
+        tg.ready();
+        tg.expand();
+        if (typeof tg.setHeaderColor === "function") tg.setHeaderColor("#0b0f0e");
+        if (typeof tg.setBackgroundColor === "function") tg.setBackgroundColor("#0b0f0e");
+      } catch (_) {}
+      return tg;
+    }
+
+    (function loadTgScriptAsync() {
+      const s = document.createElement("script");
+      s.src = "https://telegram.org/js/telegram-web-app.js";
+      s.async = true;
+      const timer = setTimeout(() => {
+        try { s.src = ""; } catch (_) {}
+      }, 2500);
+      s.onload = () => {
+        clearTimeout(timer);
+        initTelegramSdk();
+      };
+      s.onerror = () => {
+        clearTimeout(timer);
+      };
+      document.head.appendChild(s);
+    })();
+
+    function extractInitDataFromHash() {
+      const h = window.location.hash || "";
+      if (!h.includes("tgWebAppData=")) return "";
+      const m = h.match(/tgWebAppData=([^&]+)/);
+      if (!m) return "";
+      try {
+        return decodeURIComponent(m[1]);
+      } catch (_) {
+        return m[1];
+      }
+    }
+
+    function getInitData() {
+      const tg = initTelegramSdk();
+      if (tg && typeof tg.initData === "string" && tg.initData.length > 0) {
+        return tg.initData;
+      }
+      const qs = new URLSearchParams(window.location.search);
+      return qs.get("init_data") || extractInitDataFromHash() || "";
+    }
+
+    function num(v, d = 0) {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : d;
+    }
+
+    function esc(v) {
+      return String(v == null ? "" : v)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function toast(msg) {
+      const el = document.getElementById("toast");
+      if (!el) return;
+      el.textContent = String(msg || "");
+      el.style.display = "block";
+      clearTimeout(window.__toastTimer);
+      window.__toastTimer = setTimeout(() => { el.style.display = "none"; }, 3200);
+    }
+
+    async function api(path, opts = {}) {
+      const initData = getInitData();
+      const url = new URL(path, window.location.origin);
+      if (initData) url.searchParams.set("init_data", initData);
+
+      const headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
+      if (initData) headers["X-Init-Data"] = initData;
+
+      const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+      const tid = ctrl ? setTimeout(() => ctrl.abort(), 35000) : null;
+      let res;
+      try {
+        res = await fetch(url.toString(), Object.assign({}, opts, {
+          headers,
+          signal: ctrl ? ctrl.signal : undefined
+        }));
+      } catch (e) {
+        if (tid) clearTimeout(tid);
+        const err = new Error(e && e.name === "AbortError"
+          ? "Превышено время ожидания ответа сервера"
+          : "Ошибка сети при обращении к серверу");
+        err.status = 0;
+        throw err;
+      } finally {
+        if (tid) clearTimeout(tid);
+      }
+
+      const text = await res.text();
+      let data = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch (_) {
+        data = { detail: text || ("HTTP " + res.status) };
+      }
+
+      if (!res.ok) {
+        const msg = (data && (data.detail || data.error || data.message)) || ("Ошибка сервера: HTTP " + res.status);
+        const err = new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+        err.status = res.status;
+        throw err;
+      }
+      return data;
+    }
+
+    function renderFallback(err) {
+      const app = document.getElementById("app");
+      const nav = document.getElementById("nav");
+      if (nav) nav.style.display = "none";
+
+      const initData = getInitData();
+      const rawMsg = err && err.message ? err.message : "Не удалось загрузить данные приложения.";
+
+      if (!initData || (err && err.status === 401)) {
+        app.innerHTML = `
+          <div class="card">
+            <h2 class="title">Откройте SnapEat внутри Telegram</h2>
+            <p class="sub">
+              Мини-приложение использует авторизацию Telegram WebApp. Откройте бота через кнопку меню «Дневник» или кнопку под сообщением.
+            </p>
+            <div class="err-details">
+              1. Откройте чат с ботом SnapEat в Telegram<br/>
+              2. Нажмите «Дневник» в меню или кнопку под сообщением<br/>
+              3. Если сеть сбоит — нажмите «Повторить проверку»
+            </div>
+            <button class="btn" onclick="load()">Повторить проверку</button>
+          </div>
+        `;
+        return;
+      }
+
+      app.innerHTML = `
+        <div class="card err-box">
+          <div class="err-title">Не удалось загрузить SnapEat</div>
+          <p class="sub">Произошла ошибка при запросе к серверу. Попробуйте повторить.</p>
+          <div class="err-details">${esc(rawMsg)}</div>
+          <div class="row">
+            <button class="btn" onclick="load()">Обновить</button>
+            <button class="btn secondary" onclick="window.location.reload()">Перезагрузить</button>
+          </div>
+        </div>
+      `;
+    }
+
+    function setTab(tab) {
+      TAB = tab;
+      if (tab !== "profile") SHOW_FULL_PROFILE_FORM = false;
+      document.querySelectorAll("#nav button").forEach(b => {
+        b.classList.toggle("active", b.dataset.tab === tab);
+      });
+      render();
+    }
+
+    function mealLabel(m) {
+      return ({ breakfast: "Завтрак", lunch: "Обед", dinner: "Ужин", snack: "Перекус" })[m] || "Перекус";
+    }
+
+    function computeGoalProgress(p) {
+      const prof = p || {};
+      const curW = num(prof.weight, 0);
+      const startW = num(prof.start_weight, curW);
+      const targetW = prof.target_weight != null && prof.target_weight !== "" ? num(prof.target_weight, curW) : curW;
+      const hasTarget = Math.abs(targetW - startW) > 0.05;
+      const remainingKg = Math.abs(targetW - curW);
+      let pct = 0;
+      if (hasTarget) {
+        const totalDist = Math.abs(targetW - startW);
+        const doneDist = (targetW - startW) < 0
+          ? (startW - curW)
+          : (curW - startW);
+        pct = Math.max(0, Math.min(100, Math.round((doneDist / totalDist) * 100)));
+      } else if (curW > 0) {
+        pct = 100;
+      }
+      return {
+        curW,
+        startW,
+        targetW,
+        remainingKg: Number(remainingKg.toFixed(1)),
+        pct,
+        hasTarget
+      };
+    }
+
+    function renderGoalChartCard(p, compact = false) {
+      const g = computeGoalProgress(p);
+      const r = 34;
+      const circ = 2 * Math.PI * r;
+      const dashOffset = circ * (1 - g.pct / 100);
+
+      return `
+        <div class="goal-ring-box">
+          <div class="row">
+            <div class="row-tight" style="gap:12px;">
+              <svg width="82" height="82" viewBox="0 0 82 82" aria-hidden="true">
+                <circle cx="41" cy="41" r="${r}" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="7" />
+                <circle
+                  cx="41" cy="41" r="${r}" fill="none"
+                  stroke="#3ddc97" stroke-width="7" stroke-linecap="round"
+                  stroke-dasharray="${circ.toFixed(1)}"
+                  stroke-dashoffset="${dashOffset.toFixed(1)}"
+                  transform="rotate(-90 41 41)"
+                />
+                <text x="41" y="45" text-anchor="middle" fill="#eef5f2" font-size="15" font-weight="800">${g.pct}%</text>
+              </svg>
+              <div>
+                <div style="font-size:13px;font-weight:800;">До цели по весу: <span style="color:var(--accent);">${g.remainingKg} кг</span></div>
+                <div class="sub">
+                  ${g.hasTarget
+                    ? `Пройдено <b>${g.pct}%</b> пути к цели <b>${g.targetW.toFixed(1)} кг</b>`
+                    : `Текущий вес <b>${g.curW ? g.curW.toFixed(1) + " кг" : "—"}</b>`}
+                </div>
+              </div>
+            </div>
+            ${!compact ? `<button class="btn sm secondary" onclick="SHOW_FULL_PROFILE_FORM=!SHOW_FULL_PROFILE_FORM;render()">${SHOW_FULL_PROFILE_FORM ? "Скрыть" : "Цели"}</button>` : ""}
+          </div>
+
+          <div class="weight-stats-grid">
+            <div class="weight-stat">
+              <div class="w-lbl">Старт</div>
+              <div class="w-val">${g.startW ? g.startW.toFixed(1) : "—"} кг</div>
+            </div>
+            <div class="weight-stat">
+              <div class="w-lbl">Сейчас</div>
+              <div class="w-val" style="color:var(--accent);">${g.curW ? g.curW.toFixed(1) : "—"} кг</div>
+            </div>
+            <div class="weight-stat">
+              <div class="w-lbl">Цель</div>
+              <div class="w-val" style="color:var(--gold);">${g.targetW ? g.targetW.toFixed(1) : "—"} кг</div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function render() {
+      const app = document.getElementById("app");
+      const nav = document.getElementById("nav");
+      if (!app) return;
+
+      if (!S || typeof S !== "object") {
+        renderFallback(LAST_ERROR || new Error("Пустой ответ от сервера"));
+        return;
+      }
+
+      if (nav) nav.style.display = "flex";
+
+      const norm = S.norm || { kcal: 2000, p: 120, f: 65, c: 220 };
+      const tot = S.total || { kcal: 0, p: 0, f: 0, c: 0 };
+      const ai = S.ai || {};
+      const isPro = Boolean(ai.is_pro || S.is_pro);
+      const entries = Array.isArray(S.entries) ? S.entries : [];
+      const kcalNorm = Math.max(1, num(norm.kcal, 2000));
+      const pct = Math.min(100, Math.round((num(tot.kcal) / kcalNorm) * 100));
+      const pPct = Math.min(100, Math.round((num(tot.p) / Math.max(1, num(norm.p, 120))) * 100));
+      const fPct = Math.min(100, Math.round((num(tot.f) / Math.max(1, num(norm.f, 65))) * 100));
+      const cPct = Math.min(100, Math.round((num(tot.c) / Math.max(1, num(norm.c, 220))) * 100));
+
+      const supHandle = (S.support && S.support.handle) || SUPPORT_USERNAME;
+      const supUrl = (S.support && S.support.url) || SUPPORT_LINK;
+
+      const headerCard = `
+        <div class="card">
+          <div class="row">
+            <div class="row-tight">
+              <div class="logo">Snap<span>Eat</span></div>
+              <span class="pill ${isPro ? "pro" : "accent"}">${isPro ? "👑 PRO" : ("ИИ: " + num(ai.trial_remaining) + "/" + num(ai.trial_monthly_limit || 5))}</span>
+              ${num(ai.extra_ai_credits) > 0 ? `<span class="pill gold">⚡ +${num(ai.extra_ai_credits)}</span>` : ""}
+            </div>
+            <div class="row-tight">
+              ${S.is_admin ? `<a class="pill" href="/admin">🛡️ Админ</a>` : ""}
+              <button class="pill" onclick="load()" title="Обновить">↻</button>
+            </div>
+          </div>
+          <div class="row" style="margin-top:10px;">
+            <input type="date" value="${esc(SELECTED_DAY)}" onchange="SELECTED_DAY=this.value;load()" style="margin-top:0;max-width:166px;" />
+            <div class="row-tight" style="gap:6px;">
+              <span class="pill">🔥 ${num(S.streak)} дн.</span>
+              <span class="pill">💧 ${num(S.water)}/${num(S.water_goal || 2000)}</span>
+            </div>
+          </div>
+        </div>
+      `;
+
+      if (TAB === "today") {
+        app.innerHTML = headerCard + `
+          <div class="card-emerald">
+            <div class="row">
+              <div>
+                <h2 class="title">Баланс за день</h2>
+                <p class="sub">Цель: <b>${Math.round(num(norm.kcal))}</b> ккал · Осталось: <b>${Math.max(0, Math.round(num(norm.kcal) - num(tot.kcal)))}</b> ккал</p>
+              </div>
+              <button class="btn sm" onclick="setTab('add')">+ Записать</button>
+            </div>
+            <div class="bar"><i style="width:${pct}%"></i></div>
+            <div class="kpi-grid">
+              <div class="kpi"><div class="val">${Math.round(num(tot.kcal))}</div><div class="lbl">Ккал</div></div>
+              <div class="kpi"><div class="val">${Math.round(num(tot.p))}г</div><div class="lbl">Белки</div></div>
+              <div class="kpi"><div class="val">${Math.round(num(tot.f))}г</div><div class="lbl">Жиры</div></div>
+              <div class="kpi"><div class="val">${Math.round(num(tot.c))}г</div><div class="lbl">Углеводы</div></div>
+            </div>
+            <div class="macro-row">
+              <div class="macro-pill">
+                <div class="macro-top"><span>Б</span><b>${Math.round(num(tot.p))}/${Math.round(num(norm.p, 120))}г</b></div>
+                <div class="mini-bar"><i style="width:${pPct}%;background:#3ddc97;"></i></div>
+              </div>
+              <div class="macro-pill">
+                <div class="macro-top"><span>Ж</span><b>${Math.round(num(tot.f))}/${Math.round(num(norm.f, 65))}г</b></div>
+                <div class="mini-bar"><i style="width:${fPct}%;background:#ffb84d;"></i></div>
+              </div>
+              <div class="macro-pill">
+                <div class="macro-top"><span>У</span><b>${Math.round(num(tot.c))}/${Math.round(num(norm.c, 220))}г</b></div>
+                <div class="mini-bar"><i style="width:${cPct}%;background:#4cc3ff;"></i></div>
+              </div>
+            </div>
+            <div class="chips" style="margin-top:12px;">
+              <button class="chip" onclick="addWater(250)">💧 +250 мл</button>
+              <button class="chip" onclick="addWater(500)">💧 +500 мл</button>
+              <button class="chip" onclick="addWater(-250)">−250 мл</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="row" style="margin-bottom:4px;">
+              <h3 class="h3" style="margin:0;">Приёмы пищи (${entries.length})</h3>
+              <button class="chip" onclick="setTab('add')">+ Добавить</button>
+            </div>
+            ${entries.length === 0 ? `
+              <p class="sub" style="padding:10px 0;">За выбранный день пока нет записей.</p>
+            ` : entries.map(e => `
+              <div class="meal-item">
+                <div class="f1">
+                  <div class="meal-name">${esc(e.name || "Блюдо")} <span class="sub" style="display:inline;">(${mealLabel(e.meal)}${num(e.grams) > 0 ? ", " + Math.round(num(e.grams)) + "г" : ""})</span></div>
+                  <div class="meal-meta">${Math.round(num(e.kcal))} ккал · Б ${Math.round(num(e.p))}г · Ж ${Math.round(num(e.f))}г · У ${Math.round(num(e.c))}г</div>
+                </div>
+                <button class="btn sm danger" onclick="delEntry(${Number(e.id)})">✕</button>
+              </div>
+            `).join("")}
+          </div>
+        `;
+        return;
+      }
+
+      if (TAB === "add") {
+        app.innerHTML = headerCard + `
+          <div class="card-emerald">
+            <h2 class="title">ИИ-анализ еды</h2>
+            <p class="sub">Опишите порцию текстом или прикрепите фото блюда или этикетки.</p>
+            <label>Приём пищи</label>
+            <div class="chips">
+              ${[["breakfast", "Завтрак"], ["lunch", "Обед"], ["dinner", "Ужин"], ["snack", "Перекус"]]
+                .map(([k, l]) => `<button class="chip ${SELECTED_MEAL === k ? "on" : ""}" onclick="SELECTED_MEAL='${k}';render()">${l}</button>`)
+                .join("")}
+            </div>
+            <label>Описание блюда и порции</label>
+            <textarea id="aiText" rows="2" placeholder="Например: гречка 200 г и куриная грудка 150 г"></textarea>
+            <label>Фото еды или этикетки</label>
+            <input id="aiFile" type="file" accept="image/*" />
+            <button class="btn" style="margin-top:12px;" onclick="runAiAnalyze()">Рассчитать через ИИ</button>
+
+            ${AI_PREVIEW.length ? `
+              <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:10px;">
+                <div class="h3">Найдено позиций: ${AI_PREVIEW.length}</div>
+                ${AI_PREVIEW.map((it, idx) => `
+                  <div class="meal-item">
+                    <div class="f1">
+                      <div class="meal-name">${esc(it.name)} (${Math.round(num(it.grams))} г)</div>
+                      <div class="meal-meta">${Math.round(num(it.kcal))} ккал · Б ${num(it.p)}г · Ж ${num(it.f)}г · У ${num(it.c)}г</div>
+                    </div>
+                    <button class="btn sm danger" onclick="AI_PREVIEW.splice(${idx},1);render()">Убрать</button>
+                  </div>
+                `).join("")}
+                <button class="btn" style="margin-top:10px;" onclick="saveAiPreview()">Добавить в дневник</button>
+              </div>
+            ` : ""}
+          </div>
+
+          <div class="card">
+            <h3 class="h3">Ручной ввод</h3>
+            <label>Название</label>
+            <input id="mName" type="text" placeholder="Овсянка на воде" />
+            <div class="row">
+              <div class="f1"><label>Граммы</label><input id="mGrams" type="number" value="200" /></div>
+              <div class="f1"><label>Ккал</label><input id="mKcal" type="number" placeholder="150" /></div>
+            </div>
+            <div class="row">
+              <div class="f1"><label>Белки (г)</label><input id="mP" type="number" step="0.1" placeholder="5" /></div>
+              <div class="f1"><label>Жиры (г)</label><input id="mF" type="number" step="0.1" placeholder="3" /></div>
+              <div class="f1"><label>Углеводы (г)</label><input id="mC" type="number" step="0.1" placeholder="25" /></div>
+            </div>
+            <button class="btn secondary" style="margin-top:12px;" onclick="addManual()">Сохранить вручную</button>
+          </div>
+        `;
+        return;
+      }
+
+      if (TAB === "plan") {
+        app.innerHTML = headerCard + `
+          <div class="card-emerald">
+            <h2 class="title">ИИ-рацион</h2>
+            <p class="sub">Подберёт меню под остаток КБЖУ, цель и ваши пожелания (Yazio / Lifesum / FatSecret).</p>
+            <label>Пожелания (продукты, сладости, ограничения)</label>
+            <textarea id="mpPrefs" rows="2" placeholder="Например: побольше белка, без сладкого, творог и курица"></textarea>
+            <button class="btn" style="margin-top:12px;" onclick="genMealplan()">Сгенерировать рацион</button>
+            ${MEALPLAN_DATA ? `
+              <div style="margin-top:14px;">
+                ${(MEALPLAN_DATA.meals || []).map(m => `
+                  <div class="tariff">
+                    <div class="row">
+                      <b>${esc(m.title || mealLabel(m.meal))}</b>
+                      <button class="btn sm" onclick='addPlanMeal(${JSON.stringify(m.meal || "snack")}, ${JSON.stringify(m.items || [])})'>+ В дневник</button>
+                    </div>
+                    ${(m.items || []).map(i => `<div class="meal-meta">• ${esc(i.name)} (${Math.round(num(i.grams))}г) — ${Math.round(num(i.kcal))} ккал</div>`).join("")}
+                  </div>
+                `).join("")}
+                ${MEALPLAN_DATA.tip ? `<p class="sub" style="margin-top:10px;">💡 ${esc(MEALPLAN_DATA.tip)}</p>` : ""}
+              </div>
+            ` : ""}
+          </div>
+
+          <div class="card" id="tariffsSection">
+            <h3 class="h3">Pro и пакеты запросов</h3>
+            <p class="sub">Выберите подписку Pro или пакет дополнительных запросов.</p>
+            ${(S.catalog || []).map(item => {
+              const isFeatured = item.id === "sub_30d" || item.badge === "Основной" || item.badge === "Популярный";
+              return `
+                <div class="tariff ${isFeatured ? "featured" : ""}">
+                  <div class="row">
+                    <div class="row-tight">
+                      <b>${esc(item.title)}</b>
+                      ${item.badge ? `<span class="pill gold">${esc(item.badge)}</span>` : ""}
+                    </div>
+                    <span class="pill accent">${num(item.price_stars)} ⭐ / ${Math.round(num(item.price_rub))} ₽</span>
+                  </div>
+                  <p class="sub">${esc(item.desc || "")}</p>
+                  <button class="btn sm gold" style="margin-top:10px;" onclick="buyStars('${esc(item.id)}')">Купить (${num(item.price_stars)} ⭐)</button>
+                </div>
+              `;
+            }).join("")}
+          </div>
+        `;
+        return;
+      }
+
+      if (TAB === "profile") {
+        const p = S.profile || {};
+        app.innerHTML = headerCard + `
+          <div class="card-emerald">
+            <div class="row">
+              <div>
+                <h2 class="title">Профиль</h2>
+                <p class="sub">${esc(S.user_name || p.name || "Пользователь")} · ${isPro ? "Активна подписка Pro" : "Базовый тариф"}</p>
+              </div>
+              <span class="pill ${isPro ? "pro" : "accent"}">${isPro ? "👑 PRO" : "Free"}</span>
+            </div>
+
+            ${renderGoalChartCard(p, false)}
+
+            <div class="row" style="margin-top:12px;gap:8px;">
+              <button class="btn gold" onclick="setTab('plan')">👑 Купить Pro или запросы</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="row">
+              <div>
+                <h3 class="h3" style="margin:0;">Поддержка</h3>
+                <p class="sub">Юзер менеджера: <a href="${esc(supUrl)}" target="_blank" style="color:var(--accent);font-weight:700;text-decoration:none;">${esc(supHandle)}</a></p>
+              </div>
+              <a class="pill accent" href="${esc(supUrl)}" target="_blank">Открыть чат</a>
+            </div>
+            <label>Написать обращение в поддержку</label>
+            <textarea id="supMsg" rows="2" placeholder="Опишите вопрос или проблему..."></textarea>
+            <div class="row" style="margin-top:10px;">
+              <button class="btn secondary" onclick="sendSupport()">Отправить обращение</button>
+            </div>
+          </div>
+
+          ${SHOW_FULL_PROFILE_FORM ? `
+            <div class="card">
+              <div class="row">
+                <h3 class="h3" style="margin:0;">Параметры и цель веса</h3>
+                <button class="chip" onclick="SHOW_FULL_PROFILE_FORM=false;render()">Свернуть</button>
+              </div>
+              <div class="row">
+                <div class="f1">
+                  <label>Пол</label>
+                  <select id="pSex">
+                    <option value="m" ${p.sex === "m" ? "selected" : ""}>Мужской</option>
+                    <option value="f" ${p.sex === "f" ? "selected" : ""}>Женский</option>
+                  </select>
+                </div>
+                <div class="f1">
+                  <label>Цель</label>
+                  <select id="pGoal">
+                    <option value="lose" ${p.goal === "lose" ? "selected" : ""}>Похудение</option>
+                    <option value="keep" ${!p.goal || p.goal === "keep" ? "selected" : ""}>Поддержание</option>
+                    <option value="gain" ${p.goal === "gain" ? "selected" : ""}>Набор массы</option>
+                  </select>
+                </div>
+              </div>
+              <div class="row">
+                <div class="f1"><label>Возраст</label><input id="pAge" type="number" value="${num(p.age, 28)}" /></div>
+                <div class="f1"><label>Рост (см)</label><input id="pHeight" type="number" value="${num(p.height, 175)}" /></div>
+                <div class="f1"><label>Вес (кг)</label><input id="pWeight" type="number" step="0.1" value="${num(p.weight, 72)}" /></div>
+              </div>
+              <div class="row">
+                <div class="f1"><label>Цель по весу (кг)</label><input id="pTargetWeight" type="number" step="0.1" value="${p.target_weight != null ? num(p.target_weight, 68) : ""}" placeholder="Например: 70" /></div>
+                <div class="f1"><label>Тренировок / нед</label><input id="pWorkouts" type="number" min="0" max="14" value="${num(p.workouts_per_week, 2)}" /></div>
+              </div>
+              <label>Активность</label>
+              <select id="pAct">
+                <option value="1.2" ${num(p.act, 1.375) === 1.2 ? "selected" : ""}>Минимальная (1.2)</option>
+                <option value="1.375" ${num(p.act, 1.375) === 1.375 ? "selected" : ""}>Лёгкая (1.375)</option>
+                <option value="1.55" ${num(p.act, 1.375) === 1.55 ? "selected" : ""}>Средняя (1.55)</option>
+                <option value="1.725" ${num(p.act, 1.375) === 1.725 ? "selected" : ""}>Высокая (1.725)</option>
+              </select>
+              <button class="btn" style="margin-top:14px;" onclick="saveProfile()">Сохранить изменения</button>
+            </div>
+          ` : ""}
+        `;
+      }
+    }
+
+    async function load() {
+      const app = document.getElementById("app");
+      if (app && !S) {
+        app.innerHTML = `<div class="card"><div class="loader"><div class="spinner"></div><div>Загрузка данных...</div></div></div>`;
+      }
+      try {
+        LAST_ERROR = null;
+        const tz = -new Date().getTimezoneOffset();
+        S = await api(`/api/state?day=${encodeURIComponent(SELECTED_DAY)}&today=${encodeURIComponent(new Date().toISOString().slice(0, 10))}&tz=${tz}`);
+        render();
+      } catch (e) {
+        LAST_ERROR = e;
+        if (!S) renderFallback(e);
+        else toast(e.message || "Ошибка обновления");
+      }
+    }
+
+    async function addWater(ml) {
+      try {
+        await api("/api/water", { method: "POST", body: JSON.stringify({ day: SELECTED_DAY, ml }) });
+        await load();
+      } catch (e) {
+        toast(e.message);
+      }
+    }
+
+    async function delEntry(id) {
+      try {
+        await api("/api/entry/" + id, { method: "DELETE" });
+        toast("Удалено");
+        await load();
+      } catch (e) {
+        toast(e.message);
+      }
+    }
+
+    async function addManual() {
+      const name = (document.getElementById("mName").value || "").trim() || "Приём пищи";
+      const grams = num(document.getElementById("mGrams").value, 100);
+      const kcal = num(document.getElementById("mKcal").value, 0);
+      const p = num(document.getElementById("mP").value, 0);
+      const f = num(document.getElementById("mF").value, 0);
+      const c = num(document.getElementById("mC").value, 0);
+      if (kcal <= 0 && (p + f + c) <= 0) return toast("Укажите КБЖУ");
+      try {
+        await api("/api/entry", {
+          method: "POST",
+          body: JSON.stringify({
+            day: SELECTED_DAY,
+            meal: SELECTED_MEAL,
+            src: "manual",
+            items: [{ name, grams, kcal, p, f, c }]
+          })
+        });
+        toast("Запись добавлена");
+        setTab("today");
+        await load();
+      } catch (e) {
+        toast(e.message);
+      }
+    }
+
+    function fileToDataUrl(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("Не удалось прочитать файл"));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function runAiAnalyze() {
+      const text = (document.getElementById("aiText").value || "").trim();
+      const fileEl = document.getElementById("aiFile");
+      const file = fileEl && fileEl.files && fileEl.files[0] ? fileEl.files[0] : null;
+      if (!text && !file) return toast("Введите описание или выберите фото");
+      try {
+        toast("ИИ анализирует...");
+        const image = file ? await fileToDataUrl(file) : "";
+        const res = await api("/api/ai", {
+          method: "POST",
+          body: JSON.stringify({ text, image, label_mode: false })
+        });
+        AI_PREVIEW = Array.isArray(res.items) ? res.items : [];
+        if (!AI_PREVIEW.length) toast("ИИ не распознал позиции");
+        render();
+      } catch (e) {
+        toast(e.message);
+      }
+    }
+
+    async function saveAiPreview() {
+      if (!AI_PREVIEW.length) return;
+      try {
+        await api("/api/entry", {
+          method: "POST",
+          body: JSON.stringify({
+            day: SELECTED_DAY,
+            meal: SELECTED_MEAL,
+            src: "text",
+            items: AI_PREVIEW
+          })
+        });
+        AI_PREVIEW = [];
+        toast("Добавлено в дневник");
+        setTab("today");
+        await load();
+      } catch (e) {
+        toast(e.message);
+      }
+    }
+
+    async function genMealplan() {
+      const prefs = (document.getElementById("mpPrefs").value || "").trim();
+      try {
+        toast("Составляю рацион...");
+        MEALPLAN_DATA = await api("/api/ai/mealplan", {
+          method: "POST",
+          body: JSON.stringify({ day: SELECTED_DAY, prefs })
+        });
+        toast("Рацион готов");
+        render();
+      } catch (e) {
+        toast(e.message);
+      }
+    }
+
+    async function addPlanMeal(meal, items) {
+      if (!Array.isArray(items) || !items.length) return;
+      try {
+        await api("/api/entry", {
+          method: "POST",
+          body: JSON.stringify({ day: SELECTED_DAY, meal, src: "mealplan", items })
+        });
+        toast("Приём пищи добавлен");
+        setTab("today");
+        await load();
+      } catch (e) {
+        toast(e.message);
+      }
+    }
+
+    async function buyStars(itemId) {
+      try {
+        const res = await api("/api/billing/create-invoice", {
+          method: "POST",
+          body: JSON.stringify({ item_id: itemId })
+        });
+        const tg = initTelegramSdk();
+        if (tg && typeof tg.openInvoice === "function" && res.invoice_url) {
+          tg.openInvoice(res.invoice_url, (status) => {
+            if (status === "paid") {
+              toast("Оплата прошла!");
+              load();
+            }
+          });
+        } else if (res.invoice_url) {
+          window.open(res.invoice_url, "_blank");
+        }
+      } catch (e) {
+        toast(e.message);
+      }
+    }
+
+    async function saveProfile() {
+      try {
+        const twRaw = document.getElementById("pTargetWeight").value;
+        const twVal = twRaw !== "" ? num(twRaw, null) : null;
+        await api("/api/profile", {
+          method: "POST",
+          body: JSON.stringify({
+            sex: document.getElementById("pSex").value,
+            goal: document.getElementById("pGoal").value,
+            age: num(document.getElementById("pAge").value, 28),
+            height: num(document.getElementById("pHeight").value, 175),
+            weight: num(document.getElementById("pWeight").value, 72),
+            target_weight: twVal,
+            act: num(document.getElementById("pAct").value, 1.375),
+            workouts_per_week: num(document.getElementById("pWorkouts").value, 2),
+            use_ai_tuning: false
+          })
+        });
+        toast("Профиль сохранён");
+        SHOW_FULL_PROFILE_FORM = false;
+        await load();
+      } catch (e) {
+        toast(e.message);
+      }
+    }
+
+    async function sendSupport() {
+      const msgEl = document.getElementById("supMsg");
+      const msg = (msgEl && msgEl.value ? msgEl.value : "").trim();
+      if (msg.length < 3) return toast("Напишите обращение (от 3 символов)");
+      try {
+        await api("/api/support/request", {
+          method: "POST",
+          body: JSON.stringify({ category: "general", message: msg })
+        });
+        if (msgEl) msgEl.value = "";
+        toast("Обращение отправлено");
+      } catch (e) {
+        toast(e.message);
+      }
+    }
+
+    window.addEventListener("error", (ev) => {
+      if (!S) renderFallback(ev.error || new Error(ev.message || "Ошибка скрипта"));
+    });
+    window.addEventListener("unhandledrejection", (ev) => {
+      if (!S) renderFallback(ev.reason instanceof Error ? ev.reason : new Error(String(ev.reason || "Ошибка запроса")));
+    });
+
+    load();
+  </script>
+</body>
+</html>

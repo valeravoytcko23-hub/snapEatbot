@@ -480,25 +480,16 @@ def get_user(uid, name="", ref_by=None, username=""):
     return run("SELECT * FROM users WHERE id=?", (uid,))[0]
 
 
-def _extract_init_data(header_val: str = "", query_init: str = "") -> str:
-    raw = (header_val or "").strip()
-    if raw:
-        return raw
-    return (query_init or "").strip()
-
-
 def auth(init: str) -> dict:
     try:
-        if not init or not init.strip():
-            raise ValueError("empty initData")
         d = dict(parse_qsl(init, keep_blank_values=True))
         got = d.pop("hash")
         check = "\n".join(f"{k}={v}" for k, v in sorted(d.items()))
         key = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
         if not hmac.compare_digest(hmac.new(key, check.encode(), hashlib.sha256).hexdigest(), got):
-            raise ValueError("bad hash")
+            raise ValueError
         if time.time() - int(d["auth_date"]) > 172800:
-            raise ValueError("expired auth_date")
+            raise ValueError
         return json.loads(d["user"])
     except Exception:
         raise HTTPException(401, "Откройте приложение из Telegram")
@@ -1635,10 +1626,8 @@ async def _ping_self():
 async def reminder_loop():
     keepalive_enabled = (os.getenv("KEEPALIVE_ENABLED", "1") or "1").strip().lower() not in ("0", "false", "no", "off")
     last_prune_ts = 0
-    first_tick = True
     while True:
-        await asyncio.sleep(15 if first_tick else 600)
-        first_tick = False
+        await asyncio.sleep(600)
         now_s = int(time.time())
         if now_s - last_prune_ts >= 21600:
             prune_old_logs()
@@ -1758,8 +1747,8 @@ def calc_streak(uid, today):
 
 
 @app.get("/api/state")
-async def state(day: str = "", today: str = "", tz: int = 180, x_init_data: str = Header(default=""), init_data: str = ""):
-    tu = auth(_extract_init_data(x_init_data, init_data))
+async def state(day: str = "", today: str = "", tz: int = 180, x_init_data: str = Header(default="")):
+    tu = auth(x_init_data)
     u = get_user(tu["id"], tu.get("first_name", ""), username=tu.get("username", ""))
     if -720 <= tz <= 840 and u.get("tz_offset") != tz:
         run("UPDATE users SET tz_offset=? WHERE id=?", (tz, u["id"]))
@@ -1822,8 +1811,8 @@ class SupportRequestCreate(BaseModel):
 
 
 @app.post("/api/support/request")
-async def create_support_request(r: SupportRequestCreate, x_init_data: str = Header(default=""), init_data: str = ""):
-    tu = auth(_extract_init_data(x_init_data, init_data))
+async def create_support_request(r: SupportRequestCreate, x_init_data: str = Header(default="")):
+    tu = auth(x_init_data)
     u = get_user(tu["id"], tu.get("first_name", ""), username=tu.get("username", ""))
     msg_txt = re.sub(r"\s+", " ", r.message.strip())
     if len(msg_txt) < 3:
@@ -1842,8 +1831,8 @@ async def create_support_request(r: SupportRequestCreate, x_init_data: str = Hea
 
 
 @app.get("/api/suggest")
-async def api_suggest(day: str = "", mode: str = "", seed: int = 0, x_init_data: str = Header(default=""), init_data: str = ""):
-    tu = auth(_extract_init_data(x_init_data, init_data))
+async def api_suggest(day: str = "", mode: str = "", seed: int = 0, x_init_data: str = Header(default="")):
+    tu = auth(x_init_data)
     u = get_user(tu["id"], tu.get("first_name", ""), username=tu.get("username", ""))
     if u["kcal"] is None:
         return {"items": []}
@@ -1852,8 +1841,8 @@ async def api_suggest(day: str = "", mode: str = "", seed: int = 0, x_init_data:
 
 
 @app.get("/api/week")
-async def week(day: str = "", x_init_data: str = Header(default=""), init_data: str = ""):
-    tu = auth(_extract_init_data(x_init_data, init_data))
+async def week(day: str = "", x_init_data: str = Header(default="")):
+    tu = auth(x_init_data)
     end = date.fromisoformat(norm_day(day))
     start = end - timedelta(days=6)
     rows = run("SELECT day, SUM(kcal) kcal, SUM(p) p, SUM(f) f, SUM(c) c FROM entries "
@@ -1890,8 +1879,8 @@ class Profile(BaseModel):
 
 
 @app.post("/api/profile")
-async def save_profile(p: Profile, x_init_data: str = Header(default=""), init_data: str = ""):
-    tu = auth(_extract_init_data(x_init_data, init_data))
+async def save_profile(p: Profile, x_init_data: str = Header(default="")):
+    tu = auth(x_init_data)
     cur_u = get_user(tu["id"], tu.get("first_name", ""), username=tu.get("username", ""))
     ai_note = ""
     if p.manual:
@@ -1951,8 +1940,8 @@ class WeightLogReq(BaseModel):
 
 
 @app.post("/api/weight")
-async def log_weight(r: WeightLogReq, x_init_data: str = Header(default=""), init_data: str = ""):
-    tu = auth(_extract_init_data(x_init_data, init_data))
+async def log_weight(r: WeightLogReq, x_init_data: str = Header(default="")):
+    tu = auth(x_init_data)
     d = norm_day(r.day)
     run(
         "INSERT INTO weights(uid,day,weight) VALUES(?,?,?) ON CONFLICT(uid,day) DO UPDATE SET weight=EXCLUDED.weight",
@@ -1970,8 +1959,8 @@ class AddReq(BaseModel):
 
 
 @app.post("/api/entry")
-async def add_entry(r: AddReq, x_init_data: str = Header(default=""), init_data: str = ""):
-    tu = auth(_extract_init_data(x_init_data, init_data))
+async def add_entry(r: AddReq, x_init_data: str = Header(default="")):
+    tu = auth(x_init_data)
     get_user(tu["id"], tu.get("first_name", ""), username=tu.get("username", ""))
     day = norm_day(r.day)
     for i, it in enumerate(r.items):
@@ -1987,8 +1976,8 @@ class CopyMealReq(BaseModel):
 
 
 @app.post("/api/copy-meal")
-async def copy_meal(r: CopyMealReq, x_init_data: str = Header(default=""), init_data: str = ""):
-    tu = auth(_extract_init_data(x_init_data, init_data))
+async def copy_meal(r: CopyMealReq, x_init_data: str = Header(default="")):
+    tu = auth(x_init_data)
     fd, td = norm_day(r.from_day), norm_day(r.to_day)
     rows = run("SELECT * FROM entries WHERE uid=? AND day=? AND meal=? ORDER BY ts", (tu["id"], fd, r.meal))
     if not rows:
@@ -2004,8 +1993,8 @@ class EditReq(BaseModel):
 
 
 @app.patch("/api/entry/{eid}")
-async def edit_entry(eid: int, r: EditReq, x_init_data: str = Header(default=""), init_data: str = ""):
-    tu = auth(_extract_init_data(x_init_data, init_data))
+async def edit_entry(eid: int, r: EditReq, x_init_data: str = Header(default="")):
+    tu = auth(x_init_data)
     rows = run("SELECT * FROM entries WHERE id=? AND uid=?", (eid, tu["id"]))
     if not rows:
         raise HTTPException(404, "Запись не найдена")
@@ -2017,8 +2006,8 @@ async def edit_entry(eid: int, r: EditReq, x_init_data: str = Header(default="")
 
 
 @app.delete("/api/entry/{eid}")
-async def del_entry(eid: int, x_init_data: str = Header(default=""), init_data: str = ""):
-    tu = auth(_extract_init_data(x_init_data, init_data))
+async def del_entry(eid: int, x_init_data: str = Header(default="")):
+    tu = auth(x_init_data)
     run("DELETE FROM entries WHERE id=? AND uid=?", (eid, tu["id"]))
     return {"ok": True}
 
@@ -2029,8 +2018,8 @@ class WaterReq(BaseModel):
 
 
 @app.post("/api/water")
-async def add_water(r: WaterReq, x_init_data: str = Header(default=""), init_data: str = ""):
-    tu = auth(_extract_init_data(x_init_data, init_data))
+async def add_water(r: WaterReq, x_init_data: str = Header(default="")):
+    tu = auth(x_init_data)
     day = norm_day(r.day)
     cur = run("SELECT ml FROM water WHERE uid=? AND day=?", (tu["id"], day))
     new = max(0, min(10000, (cur[0]["ml"] if cur else 0) + r.ml))
@@ -2042,8 +2031,8 @@ async def add_water(r: WaterReq, x_init_data: str = Header(default=""), init_dat
 
 
 @app.post("/api/fav")
-async def add_fav(it: Item, x_init_data: str = Header(default=""), init_data: str = ""):
-    tu = auth(_extract_init_data(x_init_data, init_data))
+async def add_fav(it: Item, x_init_data: str = Header(default="")):
+    tu = auth(x_init_data)
     if not run("SELECT id FROM favs WHERE uid=? AND name=? AND ROUND(COALESCE(grams,0)::numeric)=ROUND(?::numeric)", (tu["id"], it.name, it.grams)):
         run("INSERT INTO favs(uid,name,grams,kcal,p,f,c) VALUES(?,?,?,?,?,?,?)",
             (tu["id"], it.name, it.grams, it.kcal, it.p, it.f, it.c))
@@ -2051,8 +2040,8 @@ async def add_fav(it: Item, x_init_data: str = Header(default=""), init_data: st
 
 
 @app.delete("/api/fav/{fid}")
-async def del_fav(fid: int, x_init_data: str = Header(default=""), init_data: str = ""):
-    tu = auth(_extract_init_data(x_init_data, init_data))
+async def del_fav(fid: int, x_init_data: str = Header(default="")):
+    tu = auth(x_init_data)
     run("DELETE FROM favs WHERE id=? AND uid=?", (fid, tu["id"]))
     return {"ok": True}
 
@@ -2064,8 +2053,8 @@ class AIReq(BaseModel):
 
 
 @app.post("/api/ai")
-async def ai_analyze(r: AIReq, x_init_data: str = Header(default=""), init_data: str = ""):
-    tu = auth(_extract_init_data(x_init_data, init_data))
+async def ai_analyze(r: AIReq, x_init_data: str = Header(default="")):
+    tu = auth(x_init_data)
     u = get_user(tu["id"], tu.get("first_name", ""), username=tu.get("username", ""))
     if not r.text.strip() and not r.image:
         raise HTTPException(400, "Опишите еду или приложите фото")
@@ -2092,8 +2081,8 @@ class MealPlanReq(BaseModel):
 
 
 @app.post("/api/ai/mealplan")
-async def ai_mealplan(r: MealPlanReq, x_init_data: str = Header(default=""), init_data: str = ""):
-    tu = auth(_extract_init_data(x_init_data, init_data))
+async def ai_mealplan(r: MealPlanReq, x_init_data: str = Header(default="")):
+    tu = auth(x_init_data)
     u = get_user(tu["id"], tu.get("first_name", ""), username=tu.get("username", ""))
     if u["kcal"] is None:
         raise HTTPException(400, "Сначала заполните профиль")
@@ -2137,8 +2126,8 @@ class InvoiceReq(BaseModel):
 
 
 @app.post("/api/billing/create-invoice")
-async def create_invoice(r: InvoiceReq, x_init_data: str = Header(default=""), init_data: str = ""):
-    tu = auth(_extract_init_data(x_init_data, init_data))
+async def create_invoice(r: InvoiceReq, x_init_data: str = Header(default="")):
+    tu = auth(x_init_data)
     get_user(tu["id"], tu.get("first_name", ""), username=tu.get("username", ""))
     it = CATALOG[r.item_id]
     stars_amount = int(it["price_stars"])
@@ -2176,8 +2165,8 @@ class YooKassaCreateReq(BaseModel):
 
 
 @app.post("/api/billing/yookassa/create")
-async def create_yookassa_payment(r: YooKassaCreateReq, x_init_data: str = Header(default=""), init_data: str = ""):
-    tu = auth(_extract_init_data(x_init_data, init_data))
+async def create_yookassa_payment(r: YooKassaCreateReq, x_init_data: str = Header(default="")):
+    tu = auth(x_init_data)
     get_user(tu["id"], tu.get("first_name", ""), username=tu.get("username", ""))
     if not _yookassa_configured():
         raise HTTPException(
@@ -2369,8 +2358,8 @@ def _serialize_admin_user(u: dict) -> dict:
 
 
 @app.get("/api/admin/stats")
-async def admin_stats(force: int = 0, x_init_data: str = Header(default=""), init_data: str = ""):
-    require_admin(_extract_init_data(x_init_data, init_data))
+async def admin_stats(force: int = 0, x_init_data: str = Header(default="")):
+    require_admin(x_init_data)
     global _admin_stats_cache
     now_ts = int(time.time())
     if not force and _admin_stats_cache and (now_ts - _admin_stats_cache[0] < 30):
@@ -2448,8 +2437,8 @@ async def admin_stats(force: int = 0, x_init_data: str = Header(default=""), ini
 
 
 @app.get("/api/admin/users")
-async def admin_users(q: str = "", filter: str = "all", limit: int = 30, offset: int = 0, x_init_data: str = Header(default=""), init_data: str = ""):
-    require_admin(_extract_init_data(x_init_data, init_data))
+async def admin_users(q: str = "", filter: str = "all", limit: int = 30, offset: int = 0, x_init_data: str = Header(default="")):
+    require_admin(x_init_data)
     lim = max(1, min(int(limit or 30), 100))
     off = max(0, int(offset or 0))
     now_ts = int(time.time())
@@ -2554,8 +2543,8 @@ async def admin_user_action(r: AdminSubActionReq, x_init_data: str = Header(defa
 
 
 @app.get("/api/admin/payments")
-async def admin_payments(q: str = "", limit: int = 40, offset: int = 0, x_init_data: str = Header(default=""), init_data: str = ""):
-    require_admin(_extract_init_data(x_init_data, init_data))
+async def admin_payments(q: str = "", limit: int = 40, offset: int = 0, x_init_data: str = Header(default="")):
+    require_admin(x_init_data)
     lim = max(1, min(int(limit or 40), 100))
     off = max(0, int(offset or 0))
     where = ["1=1"]
@@ -2583,8 +2572,8 @@ async def admin_payments(q: str = "", limit: int = 40, offset: int = 0, x_init_d
 
 
 @app.get("/api/admin/requests")
-async def admin_requests(status: str = "open", limit: int = 40, x_init_data: str = Header(default=""), init_data: str = ""):
-    require_admin(_extract_init_data(x_init_data, init_data))
+async def admin_requests(status: str = "open", limit: int = 40, x_init_data: str = Header(default="")):
+    require_admin(x_init_data)
     lim = max(1, min(int(limit or 40), 100))
     if status == "open":
         rows = run(
@@ -2641,8 +2630,8 @@ async def admin_update_request(req_id: int, r: AdminRequestUpdate, x_init_data: 
 
 
 @app.get("/api/admin/logs")
-async def admin_logs(level: str = "", q: str = "", limit: int = 60, x_init_data: str = Header(default=""), init_data: str = ""):
-    require_admin(_extract_init_data(x_init_data, init_data))
+async def admin_logs(level: str = "", q: str = "", limit: int = 60, x_init_data: str = Header(default="")):
+    require_admin(x_init_data)
     lim = max(1, min(int(limit or 60), 150))
     where = ["1=1"]
     params: list = []
