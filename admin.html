@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SnapEat · Admin</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+:root{
+  --bg:#0b0f0e;--card:#141a18;--c2:#1b2421;--c3:#222e2a;--line:#273430;
+  --tx:#eef5f2;--hint:#879992;--ac:#3ddc97;--bad:#ff6b6b;--gold:#ffb84d;--cw:#4cc3ff
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{
+  margin:0;background:var(--bg);color:var(--tx);
+  font:14px/1.42 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  padding:12px 14px calc(86px + env(safe-area-inset-bottom,0px));
+}
+button,input,select,textarea{font:inherit;color:inherit}
+.row{display:flex;align-items:center;gap:8px}.sp{justify-content:space-between}.f1{flex:1;min-width:0}
+.card{background:var(--card);border:1px solid rgba(255,255,255,.05);border-radius:20px;padding:14px;margin-top:12px}
+h2{font-size:16px;margin:0 0 8px}
+.hint{color:var(--hint);font-size:12px}
+.logo{font-weight:900;font-size:19px;letter-spacing:-.5px;display:flex;align-items:center;gap:6px}
+.logo i{color:var(--ac);font-style:normal}
+.pill{font-size:11px;font-weight:800;padding:3px 8px;border-radius:10px;background:var(--c2);border:1px solid var(--line)}
+.pill.pro{background:linear-gradient(135deg,#ffc15e,#ff7a45);color:#240e00;border:0}
+.pill.err{background:rgba(255,107,107,.16);color:var(--bad);border-color:rgba(255,107,107,.35)}
+.pill.warn{background:rgba(255,184,77,.16);color:var(--gold);border-color:rgba(255,184,77,.35)}
+.pill.ok{background:rgba(61,220,151,.14);color:var(--ac);border-color:rgba(61,220,151,.3)}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.g3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.stat{background:var(--c2);border:1px solid var(--line);border-radius:16px;padding:11px}
+.stat .v{font-size:21px;font-weight:800;letter-spacing:-.5px}
+input,select,textarea{width:100%;border:1px solid var(--line);background:var(--c2);border-radius:12px;padding:9px 11px;outline:0}
+input:focus,select:focus,textarea:focus{border-color:var(--ac)}
+.btn{border:0;border-radius:12px;background:var(--ac);color:#042416;padding:9px 12px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:5px}
+.btn:active{transform:scale(.97)}.btn:disabled{opacity:.5}
+.btn.alt{background:var(--c2);color:var(--tx);border:1px solid var(--line)}
+.btn.dn{background:rgba(255,107,107,.16);color:var(--bad);border:1px solid rgba(255,107,107,.35)}
+.btn.gold{background:linear-gradient(135deg,#ffc15e,#ff8547);color:#240e00;font-weight:800}
+.chip{border:1px solid var(--line);background:var(--c2);border-radius:18px;padding:5px 10px;font-size:12px;cursor:pointer}
+.chip.on{background:var(--ac);color:#042416;font-weight:700;border-color:transparent}
+.item{padding:11px 0;border-top:1px solid var(--line)}.item:first-of-type{border-top:0}
+.wk{display:flex;gap:6px;align-items:flex-end;height:96px;margin-top:10px}
+.wk .d{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%}
+.wk i{display:block;width:100%;background:var(--ac);border-radius:5px 5px 2px 2px;min-height:3px}
+nav{
+  position:fixed;left:0;right:0;bottom:0;display:flex;gap:4px;
+  background:rgba(20,26,24,.95);backdrop-filter:blur(12px);
+  border-top:1px solid var(--line);padding:6px 8px calc(6px + env(safe-area-inset-bottom,0px));z-index:5
+}
+nav button{
+  flex:1;border:0;background:none;padding:6px 2px;border-radius:12px;color:var(--hint);
+  cursor:pointer;font-weight:600;font-size:11px;display:flex;flex-direction:column;align-items:center;gap:2px
+}
+nav button.on{color:var(--ac);background:var(--c2)}
+#M{position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;align-items:flex-end;z-index:8}#M.on{display:flex}
+.sheet{background:var(--bg);border-top:1px solid var(--line);width:100%;max-height:90vh;overflow:auto;border-radius:22px 22px 0 0;padding:14px 16px calc(20px + env(safe-area-inset-bottom,0px))}
+#T{position:fixed;left:50%;top:12px;transform:translateX(-50%);background:#eef5f2;color:#0b0f0e;padding:9px 15px;border-radius:12px;font-size:13px;font-weight:700;z-index:10;display:none;max-width:92%}
+</style>
+</head>
+<body>
+<div id="app"></div><nav id="nav"></nav><div id="M"></div><div id="T"></div>
+<script>
+const tg=window.Telegram?.WebApp||{ready(){},expand(){},initData:''};
+tg.ready();tg.expand();try{tg.setHeaderColor('#0b0f0e');tg.setBackgroundColor('#0b0f0e')}catch{}
+
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtTs=ts=>ts?new Date(Number(ts)*1000).toLocaleString('ru',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
+const fmtD=ts=>ts?new Date(Number(ts)*1000).toLocaleDateString('ru'):'—';
+
+let tab='dash',STATS=null,USERS=[],USERS_TOTAL=0,USER_Q='',USER_F='all';
+let PAYS=[],PAY_Q='',REQS=[],REQ_F='open',LOGS=[],LOG_LVL='',LOG_Q='',LOG_RET=10;
+
+function toast(t){const e=$('#T');if(!e)return;e.textContent=String(t||'');e.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>e.style.display='none',3000)}
+function modal(h){const m=$('#M');m.innerHTML='<div class="sheet">'+h+'</div>';m.classList.add('on')}
+function closeM(){$('#M').classList.remove('on')}
+$('#M').onclick=e=>{if(e.target.id==='M')closeM()};
+
+async function api(p,m='GET',b){
+  const ctrl=typeof AbortController!=='undefined'?new AbortController():null;const tid=ctrl?setTimeout(()=>ctrl.abort(),30000):null;
+  let r;try{r=await fetch(p,{method:m,headers:{'Content-Type':'application/json','X-Init-Data':tg.initData||''},body:b?JSON.stringify(b):undefined,signal:ctrl?.signal});}catch(err){if(tid)clearTimeout(tid);throw{status:0,detail:err?.name==='AbortError'?'Таймаут запроса к серверу':'Ошибка сети'}}finally{if(tid)clearTimeout(tid);}
+  if(!r.ok){let d='';try{d=(await r.json()).detail}catch{}throw{status:r.status,detail:typeof d==='string'?d:'Ошибка запроса'}}
+  return r.json();
+}
+
+function renderNav(){
+  const badge=STATS?.open_requests?` (${STATS.open_requests})`:'';
+  $('#nav').innerHTML=[
+    ['dash','📊','Сводка'],
+    ['users','👥','Юзеры'],
+    ['reqs','📩','Запросы'+badge],
+    ['pays','💳','Оплаты'],
+    ['logs','🧾','Логи']
+  ].map(([k,ic,l])=>`<button class="${tab===k?'on':''}" onclick="go('${k}')"><span style="font-size:17px">${ic}</span><span>${l}</span></button>`).join('');
+}
+
+async function go(k){
+  tab=k;render();
+  if(k==='dash')await loadStats(false);
+  else if(k==='users')await loadUsers();
+  else if(k==='reqs')await loadReqs();
+  else if(k==='pays')await loadPays();
+  else if(k==='logs')await loadLogs();
+}
+
+function render(){
+  renderNav();
+  const head=`<div class="row sp">
+    <div class="logo">Snap<i>Eat</i> <span class="pill ok">ADMIN</span></div>
+    <div class="row">
+      <a class="chip" href="/" style="text-decoration:none">← В бота</a>
+      <button class="chip" onclick="refreshTab()">↻</button>
+    </div>
+  </div>`;
+  let body='';
+  if(tab==='dash')body=viewDash();
+  else if(tab==='users')body=viewUsers();
+  else if(tab==='reqs')body=viewReqs();
+  else if(tab==='pays')body=viewPays();
+  else body=viewLogs();
+  $('#app').innerHTML=head+body;
+}
+
+async function refreshTab(){
+  if(tab==='dash')await loadStats(true);
+  else if(tab==='users')await loadUsers();
+  else if(tab==='reqs')await loadReqs();
+  else if(tab==='pays')await loadPays();
+  else if(tab==='logs')await loadLogs();
+  toast('Обновлено');
+}
+
+function viewDash(){
+  if(!STATS)return `<div class="card"><div class="hint">Загрузка статистики…</div></div>`;
+  const s=STATS;
+  const chart=s.daily_chart||[];
+  const mx=Math.max(1,...chart.map(x=>x.rub||x.stars||x.count||0));
+  return `
+  <div class="card">
+    <h2>⚡ Быстрая выдача / отзыв по @username или ID</h2>
+    <div class="row" style="margin-top:6px">
+      <input id="qTarget" placeholder="@username или user_id">
+      <input id="qDays" type="number" value="30" min="1" max="3650" style="width:82px" title="Дней">
+    </div>
+    <div class="row" style="margin-top:8px;flex-wrap:wrap">
+      <button class="btn gold f1" onclick="quickAction('grant_pro')">👑 Выдать Pro</button>
+      <button class="btn dn" onclick="quickAction('revoke_pro')">Забрать Pro</button>
+      <button class="btn alt" onclick="quickAction('add_credits',10)">+10 ИИ</button>
+      <button class="btn alt" onclick="quickAction('add_mealplan',1)">+1 Рацион</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>📈 Статистика проекта</h2>
+    <div class="g2">
+      <div class="stat"><div class="hint">Всего пользователей</div><div class="v">${s.total_users}</div><div class="hint">+${s.new_24h} за 24ч · +${s.new_7d} за 7д</div></div>
+      <div class="stat"><div class="hint">Активных Pro</div><div class="v" style="color:var(--gold)">${s.active_pro}</div><div class="hint">Активны 24ч: ${s.active_24h}</div></div>
+      <div class="stat"><div class="hint">Выручка (всего)</div><div class="v" style="color:var(--ac)">${Math.round(s.total_rub)} ₽</div><div class="hint">${s.total_stars} ⭐ · покупок: ${s.total_payments}</div></div>
+      <div class="stat"><div class="hint">ИИ-запросов</div><div class="v" style="color:var(--cw)">${s.ai_today}</div><div class="hint">сегодня · за месяц: ${s.ai_month}</div></div>
+    </div>
+    <div class="g2" style="margin-top:8px">
+      <div class="stat"><div class="hint">Открытые запросы</div><div class="v" style="color:${s.open_requests?'var(--gold)':'var(--tx)'}">${s.open_requests}</div><div class="hint" style="cursor:pointer;color:var(--ac)" onclick="go('reqs')">Открыть список →</div></div>
+      <div class="stat"><div class="hint">Логи в БД (хранятся ${s.log_retention_days}д)</div><div class="v">${s.total_logs}</div><div class="hint" style="color:${s.errors_24h?'var(--bad)':'var(--hint)'}">Ошибок за 24ч: ${s.errors_24h}</div></div>
+    </div>
+    <div class="hint" style="margin-top:12px">Покупки за последние 7 дней:</div>
+    <div class="wk">${chart.map(d=>{
+      const val=d.rub||d.stars||d.count||0;
+      const lbl=d.rub?Math.round(d.rub)+'₽':(d.stars?d.stars+'⭐':'');
+      return `<div class="d"><div class="hint" style="font-size:10px">${lbl}</div><i style="height:${Math.max(4,val/mx*100)}%"></i></div>`;
+    }).join('')}</div>
+    <div class="wk" style="height:auto;margin-top:4px">${chart.map(d=>`<div class="d hint" style="font-size:10px">${esc(d.day.slice(5))}</div>`).join('')}</div>
+  </div>`;
+}
+
+async function quickAction(action,amt=0){
+  const target=($('#qTarget')?.value||'').trim();
+  const days=Math.max(1,parseInt($('#qDays')?.value||'30',10)||30);
+  if(!target)return toast('Введите @username или user_id');
+  try{
+    const r=await api('/api/admin/users/action','POST',{target,action,days,amount:amt,notify:true});
+    toast(`Готово: ${r.user.username?'@'+r.user.username:r.user.id}`);
+    await loadStats(true);
+  }catch(e){toast(e.detail)}
+}
+
+function viewUsers(){
+  return `<div class="card">
+    <div class="row"><input id="uSearch" value="${esc(USER_Q)}" placeholder="Поиск по @username, ID или имени" onkeydown="if(event.key==='Enter'){USER_Q=this.value;loadUsers()}"><button class="btn" onclick="USER_Q=$('#uSearch').value;loadUsers()">Найти</button></div>
+    <div class="row" style="margin-top:8px;flex-wrap:wrap">
+      ${[['all','Все ('+USERS_TOTAL+')'],['pro','👑 Только Pro'],['credits','⚡ С кредитами']].map(([k,l])=>`<button class="chip ${USER_F===k?'on':''}" onclick="USER_F='${k}';loadUsers()">${l}</button>`).join('')}
+    </div>
+  </div>
+  <div class="card">
+    ${USERS.length?USERS.map(u=>`<div class="item">
+      <div class="row sp">
+        <div class="f1">
+          <b>${esc(u.name||'Без имени')}</b> ${u.username?`<span style="color:var(--ac)">@${esc(u.username)}</span>`:''} <span class="hint">#${u.id}</span>
+          <div class="hint" style="margin-top:3px">
+            ${u.is_pro?`<span class="pill pro">PRO до ${fmtD(u.pro_until)}</span>`:`<span class="pill">Free</span>`}
+            · Пакет: <b>${u.extra_ai_credits}</b> · Рацион: <b>${u.mealplan_credits}</b> · Реф: ${u.ref_count}
+          </div>
+          <div class="hint" style="margin-top:2px">Сегодня ИИ: ${u.ai_used_today} · В сети: ${fmtTs(u.last_seen)}</div>
+        </div>
+        <button class="btn alt" onclick="openUserModal(${u.id})">Управление</button>
+      </div>
+    </div>`).join(''):'<div class="hint">Пользователи не найдены</div>'}
+  </div>`;
+}
+
+function openUserModal(uid){
+  const u=USERS.find(x=>x.id===uid);if(!u)return;
+  modal(`<h2>${esc(u.name||'Пользователь')} ${u.username?'(@'+esc(u.username)+')':''}</h2>
+  <div class="hint">ID: <code>${u.id}</code> · ${u.is_pro?'PRO активен до '+fmtD(u.pro_until):'Без подписки Pro'}</div>
+  <div class="hint" style="margin-top:4px">Пакетных запросов: <b>${u.extra_ai_credits}</b> · Билетов рациона: <b>${u.mealplan_credits}</b></div>
+
+  <div style="margin-top:12px"><b>Подписка SnapEat Pro</b></div>
+  <div class="row" style="margin-top:6px;flex-wrap:wrap">
+    <button class="btn gold" onclick="doUserModalAct('${u.id}','grant_pro',7,0)">+7 дн</button>
+    <button class="btn gold" onclick="doUserModalAct('${u.id}','grant_pro',30,0)">+30 дн</button>
+    <button class="btn gold" onclick="doUserModalAct('${u.id}','grant_pro',90,0)">+90 дн</button>
+    <button class="btn dn" onclick="doUserModalAct('${u.id}','revoke_pro',1,0)">Забрать Pro</button>
+  </div>
+
+  <div style="margin-top:14px"><b>Баланс ИИ-запросов и рациона</b></div>
+  <div class="row" style="margin-top:6px;flex-wrap:wrap">
+    <button class="btn alt" onclick="doUserModalAct('${u.id}','add_credits',30,10)">+10 ИИ</button>
+    <button class="btn alt" onclick="doUserModalAct('${u.id}','add_credits',30,30)">+30 ИИ</button>
+    <button class="btn alt" onclick="doUserModalAct('${u.id}','add_credits',30,-10)">−10 ИИ</button>
+    <button class="btn alt" onclick="doUserModalAct('${u.id}','add_mealplan',30,1)">+1 Рацион</button>
+    <button class="btn alt" onclick="doUserModalAct('${u.id}','reset_limits',30,0)">Сбросить лимиты</button>
+  </div>
+  <button class="btn alt" style="width:100%;margin-top:14px" onclick="closeM()">Закрыть</button>`);
+}
+
+async function doUserModalAct(target,action,days,amount){
+  try{
+    const r=await api('/api/admin/users/action','POST',{target:String(target),action,days,amount,notify:true});
+    const idx=USERS.findIndex(x=>x.id===r.user.id);
+    if(idx>=0)USERS[idx]=r.user;
+    toast('Обновлено');openUserModal(r.user.id);render();
+  }catch(e){toast(e.detail)}
+}
+
+function viewReqs(){
+  return `<div class="card">
+    <div class="row" style="flex-wrap:wrap">
+      ${[['open','Активные'],['new','Новые'],['in_progress','В работе'],['done','Закрытые'],['all','Все']].map(([k,l])=>`<button class="chip ${REQ_F===k?'on':''}" onclick="REQ_F='${k}';loadReqs()">${l}</button>`).join('')}
+    </div>
+  </div>
+  <div class="card">
+    ${REQS.length?REQS.map(r=>`<div class="item">
+      <div class="row sp">
+        <div><b>#${r.id}</b> · ${esc(r.user_name||'Юзер')} ${r.username?`<span style="color:var(--ac)">@${esc(r.username)}</span>`:''} <span class="hint">(${r.uid})</span></div>
+        <span class="pill ${r.status==='new'?'warn':r.status==='done'?'ok':''}">${esc(r.status)}</span>
+      </div>
+      <div style="margin:6px 0;white-space:pre-wrap">${esc(r.message)}</div>
+      <div class="row sp">
+        <span class="hint">${fmtTs(r.created_at)} · ${esc(r.category)}</span>
+        <button class="btn alt" onclick="openReqModal(${r.id})">Ответить / Статус</button>
+      </div>
+    </div>`).join(''):'<div class="hint">Обращений нет</div>'}
+  </div>`;
+}
+
+function openReqModal(id){
+  const r=REQS.find(x=>x.id===id);if(!r)return;
+  modal(`<h2>Обращение #${r.id}</h2>
+  <div class="hint">От: ${esc(r.user_name)} ${r.username?'(@'+esc(r.username)+')':''} · ID ${r.uid}</div>
+  <div class="card" style="margin:8px 0">${esc(r.message)}</div>
+  <label class="hint">Статус</label>
+  <select id="rqSt" style="margin-top:4px">
+    ${[['new','Новая'],['in_progress','В работе'],['done','Выполнена'],['rejected','Отклонена']].map(([k,l])=>`<option value="${k}" ${r.status===k?'selected':''}>${l}</option>`).join('')}
+  </select>
+  <label class="hint" style="display:block;margin-top:8px">Заметка для себя</label>
+  <input id="rqNote" value="${esc(r.admin_note||'')}" placeholder="Комментарий в админке">
+  <label class="hint" style="display:block;margin-top:8px">Ответ пользователю в Telegram (необязательно)</label>
+  <textarea id="rqReply" rows="3" placeholder="Если заполнить — бот сразу отправит это сообщение пользователю"></textarea>
+  <button class="btn" style="width:100%;margin-top:10px" onclick="saveReq(${r.id})">Сохранить и отправить</button>
+  <button class="btn alt" style="width:100%;margin-top:8px" onclick="closeM()">Закрыть</button>`);
+}
+
+async function saveReq(id){
+  try{
+    const r=await api('/api/admin/requests/'+id,'POST',{
+      status:$('#rqSt').value,
+      admin_note:$('#rqNote').value,
+      reply_to_user:$('#rqReply').value
+    });
+    closeM();toast(r.reply_sent?'Ответ отправлен пользователю!':'Статус обновлён');
+    await loadReqs();await loadStats(true);
+  }catch(e){toast(e.detail)}
+}
+
+function viewPays(){
+  return `<div class="card">
+    <div class="row"><input id="pSearch" value="${esc(PAY_Q)}" placeholder="Поиск по @username, ID, тарифу" onkeydown="if(event.key==='Enter'){PAY_Q=this.value;loadPays()}"><button class="btn" onclick="PAY_Q=$('#pSearch').value;loadPays()">Найти</button></div>
+  </div>
+  <div class="card">
+    ${PAYS.length?PAYS.map(p=>`<div class="item">
+      <div class="row sp">
+        <div><b>${esc(p.item_title)}</b></div>
+        <b>${p.amount_rub>0?Math.round(p.amount_rub)+' ₽':p.stars+' ⭐'}</b>
+      </div>
+      <div class="hint" style="margin-top:3px">
+        ${esc(p.user_name||'Юзер')} ${p.username?'(@'+esc(p.username)+')':''} · ID ${p.uid} · ${esc(p.provider)} · ${fmtTs(p.ts)}
+      </div>
+    </div>`).join(''):'<div class="hint">Покупок пока нет</div>'}
+  </div>`;
+}
+
+function viewLogs(){
+  return `<div class="card">
+    <div class="row sp">
+      <span class="hint">Автоочистка логов: каждые <b>${LOG_RET} дн.</b> (лимит 5000 строк)</span>
+      <button class="chip" onclick="pruneNow()">Очистить старые</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <input id="lSearch" value="${esc(LOG_Q)}" placeholder="Поиск по событию, ошибке или ID" onkeydown="if(event.key==='Enter'){LOG_Q=this.value;loadLogs()}">
+      <button class="btn" onclick="LOG_Q=$('#lSearch').value;loadLogs()">Найти</button>
+    </div>
+    <div class="row" style="margin-top:8px;flex-wrap:wrap">
+      ${[['','Все'],['ERROR','ERROR'],['WARNING','WARNING'],['INFO','INFO']].map(([k,l])=>`<button class="chip ${LOG_LVL===k?'on':''}" onclick="LOG_LVL='${k}';loadLogs()">${l}</button>`).join('')}
+    </div>
+  </div>
+  <div class="card">
+    ${LOGS.length?LOGS.map(l=>`<div class="item">
+      <div class="row sp">
+        <div><span class="pill ${l.level==='ERROR'?'err':l.level==='WARNING'?'warn':'ok'}">${esc(l.level)}</span> <b>${esc(l.event)}</b></div>
+        <span class="hint">${fmtTs(l.ts)}</span>
+      </div>
+      ${l.details?`<div class="hint" style="margin-top:4px;word-break:break-word">${esc(l.details)}</div>`:''}
+      ${l.uid?`<div class="hint" style="margin-top:2px">UID: ${l.uid}</div>`:''}
+    </div>`).join(''):'<div class="hint">Записей нет</div>'}
+  </div>`;
+}
+
+async function pruneNow(){
+  try{await api('/api/admin/logs/prune','POST');toast('Старые логи очищены');await loadLogs();await loadStats(true)}catch(e){toast(e.detail)}
+}
+
+async function loadStats(force=false){
+  try{STATS=await api(`/api/admin/stats?force=${force?1:0}`);render()}
+  catch(e){$('#app').innerHTML=`<div class="card" style="text-align:center;padding:24px"><b>⛔ ${esc(e.detail||'Нет доступа')}</b><div class="hint" style="margin-top:6px">Проверьте переменную ADMIN_IDS на сервере.</div></div>`}
+}
+async function loadUsers(){
+  try{const r=await api(`/api/admin/users?q=${encodeURIComponent(USER_Q)}&filter=${USER_F}`);USERS=r.users||[];USERS_TOTAL=r.total||0;render()}catch(e){toast(e.detail)}
+}
+async function loadReqs(){
+  try{REQS=(await api(`/api/admin/requests?status=${REQ_F}`)).requests||[];render()}catch(e){toast(e.detail)}
+}
+async function loadPays(){
+  try{PAYS=(await api(`/api/admin/payments?q=${encodeURIComponent(PAY_Q)}`)).payments||[];render()}catch(e){toast(e.detail)}
+}
+async function loadLogs(){
+  try{const r=await api(`/api/admin/logs?level=${LOG_LVL}&q=${encodeURIComponent(LOG_Q)}`);LOGS=r.logs||[];LOG_RET=r.retention_days||10;render()}catch(e){toast(e.detail)}
+}
+
+window.addEventListener('unhandledrejection',ev=>{try{toast(ev?.reason?.detail||'Ошибка выполнения запроса')}catch{}});
+loadStats(true);
+</script>
+</body>
+</html>
