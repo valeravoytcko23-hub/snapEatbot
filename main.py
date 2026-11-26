@@ -36,12 +36,12 @@ LOG_RETENTION_DAYS = max(1, int(os.getenv("LOG_RETENTION_DAYS", "10")))
 LOG_MAX_ROWS = max(500, int(os.getenv("LOG_MAX_ROWS", "5000")))
 
 AI_KEY = (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip()
-AI_MODEL = os.getenv("AI_MODEL", "gemini-3.5-flash-lite")
+AI_MODEL = os.getenv("AI_MODEL", "gemini-2.5-flash")
 AI_FALLBACK_MODELS = [
     m.strip()
     for m in os.getenv(
         "AI_FALLBACK_MODELS",
-        "gemini-3.5-flash-lite,gemini-3.8-flash,gemini-3.6-flash,gemini-3.1-flash-lite",
+        "gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash",
     ).split(",")
     if m.strip()
 ]
@@ -163,7 +163,7 @@ CATALOG = {
         "desc": (
             f"Подписка на 30 дней: до {PRO_LIMIT} ИИ-запросов в день "
             f"(лимит до {PRO_MONTHLY_REQUEST_CAP} в месяц), безлимитный ИИ-рацион, "
-            "график веса и расширенная аналитика."
+            "график веса, быстрый повтор приёмов пищи и аналитика."
         ),
     },
     "mealplan_1": {
@@ -260,6 +260,14 @@ def run_rc(sql, args=()):
             return cur.rowcount
 
     return _run_in_conn(_op)
+
+
+async def arun(sql, args=()):
+    return await asyncio.to_thread(run, sql, args)
+
+
+async def arun_rc(sql, args=()):
+    return await asyncio.to_thread(run_rc, sql, args)
 
 
 def init_db():
@@ -482,6 +490,8 @@ def get_user(uid, name="", ref_by=None, username=""):
 
 def auth(init: str) -> dict:
     try:
+        if not init or not isinstance(init, str):
+            raise ValueError
         d = dict(parse_qsl(init, keep_blank_values=True))
         got = d.pop("hash")
         check = "\n".join(f"{k}={v}" for k, v in sorted(d.items()))
@@ -568,9 +578,11 @@ FOODS = [
     ("Миндаль", 579, 21, 50, 22, 30), ("Авокадо", 160, 2, 15, 9, 100),
     ("Арахисовая паста", 588, 25, 50, 20, 20), ("Цельнозерновой хлеб", 247, 13, 4, 41, 60),
     ("Кефир 1%", 40, 3, 1, 4, 250), ("Огурцы и помидоры", 18, 0.9, 0.2, 3.5, 200),
+    ("Протеиновый батончик", 340, 32, 11, 28, 60), ("Протеин сывороточный", 380, 76, 6, 7, 30),
+    ("Сыр сулугуни", 290, 20, 22, 0, 40), ("Индейка филе запечённое", 135, 27, 2.5, 0, 150),
 ]
 QUICK = {"Греческий йогурт", "Творог 5%", "Банан", "Яблоко", "Миндаль", "Авокадо", "Кефир 1%",
-         "Тунец в собственном соку", "Арахисовая паста", "Огурцы и помидоры"}
+         "Тунец в собственном соку", "Арахисовая паста", "Огурцы и помидоры", "Протеиновый батончик", "Сыр сулугуни"}
 
 
 def suggest(rem, mode="", seed=0):
@@ -580,9 +592,9 @@ def suggest(rem, mode="", seed=0):
     for name, k, p, f, c, port in FOODS:
         if (mode == "quick" and name not in QUICK) or (mode == "light" and k > 100):
             continue
-        cap = min(rem["kcal"], 200) if mode == "light" else rem["kcal"]
+        cap = min(rem["kcal"], 220) if mode == "light" else rem["kcal"]
         g = min(port, int(cap / k * 100 // 10 * 10))
-        if g < 30:
+        if g < 20:
             continue
         m = {"kcal": k * g / 100, "p": p * g / 100, "f": f * g / 100, "c": c * g / 100}
         gain = (6 if mode == "protein" else 3) * min(m["p"], max(rem["p"], 0)) \
@@ -591,7 +603,7 @@ def suggest(rem, mode="", seed=0):
         out.append((gain - over + (rnd.random() * 5 if seed else 0),
                     {"name": name, "grams": g, **{x: round(v, 1) for x, v in m.items()}}))
     out.sort(key=lambda t: -t[0])
-    return [o for sc, o in out[:5] if sc > 0]
+    return [o for sc, o in out[:6] if sc > 0]
 
 
 PROMPT_FOOD = (
@@ -985,6 +997,8 @@ COMMON_FOOD_100G = {
     "кефир": ("Кефир 1%", 40, 3.0, 1.0, 4.0),
     "хлеб": ("Цельнозерновой хлеб", 247, 13.0, 4.0, 41.0),
     "цельнозерновой хлеб": ("Цельнозерновой хлеб", 247, 13.0, 4.0, 41.0),
+    "индейка": ("Индейка филе запечённое", 135, 27.0, 2.5, 0.0),
+    "сыр": ("Сыр твёрдый", 350, 25.0, 27.0, 0.0),
 }
 
 
@@ -1165,7 +1179,7 @@ async def ask_mealplan_ai(rem: dict, prefs: str = "", user_ctx: dict | None = No
             f"Целевые показатели: {norm_rem['kcal']} ккал, Белки {norm_rem['p']} г, "
             f"Жиры {norm_rem['f']} г, Углеводы {norm_rem['c']} г. "
             f"{ctx_line}"
-            f"Пожелания пользователя (учти строго, включая побольше/поменьше сладкого и продукты из холодильнике): "
+            f"Пожелания пользователя (учти строго, включая побольше/поменьше сладкого и продукты в холодильнике): "
             f"{clean_prefs or 'обычные доступные продукты, сбалансированный вкус, без экзотики'}. "
             f"В поле meal используй строго одно из значений: breakfast, lunch, dinner, snack."
         )
@@ -1460,11 +1474,12 @@ async def on_start(m: Message):
             ref_id = int(parts[1][4:])
         except ValueError:
             pass
-    get_user(
+    await asyncio.to_thread(
+        get_user,
         m.from_user.id,
         m.from_user.full_name,
-        ref_by=ref_id,
-        username=m.from_user.username or "",
+        ref_id,
+        m.from_user.username or "",
     )
     rows_kb = []
     if BASE_URL:
@@ -1507,15 +1522,15 @@ async def on_request_cmd(m: Message):
     if len(parts) < 2 or not parts[1].strip():
         await m.answer("Напишите обращение после команды, например:\n<code>/request Не пришла оплата</code>", parse_mode="HTML")
         return
-    u = get_user(m.from_user.id, m.from_user.full_name, username=m.from_user.username or "")
+    u = await asyncio.to_thread(get_user, m.from_user.id, m.from_user.full_name, None, m.from_user.username or "")
     msg_txt = re.sub(r"\s+", " ", parts[1].strip())[:800]
     now_ts = int(time.time())
-    run(
+    await arun(
         "INSERT INTO support_requests(uid, username, user_name, category, message, status, created_at, updated_at) "
         "VALUES(?,?,?,?,?,?,?,?)",
         (u["id"], u.get("username") or "", u.get("name") or "", "bot", msg_txt, "new", now_ts, now_ts),
     )
-    db_log("INFO", "support_request", f"@{u.get('username') or '-'}: {msg_txt[:120]}", uid=u["id"])
+    await asyncio.to_thread(db_log, "INFO", "support_request", f"@{u.get('username') or '-'}: {msg_txt[:120]}", u["id"])
     await m.answer("✅ Ваше обращение отправлено администратору. Мы ответим вам в этом чате!")
 
 
@@ -1580,7 +1595,7 @@ async def on_pre_checkout(q: PreCheckoutQuery):
         await q.answer(ok=True)
     else:
         log.warning("pre_checkout rejected: payload=%s currency=%s amount=%s", q.invoice_payload, q.currency, q.total_amount)
-        db_log("WARNING", "pre_checkout_rejected", f"payload={q.invoice_payload} amount={q.total_amount}", uid=q.from_user.id)
+        await asyncio.to_thread(db_log, "WARNING", "pre_checkout_rejected", f"payload={q.invoice_payload} amount={q.total_amount}", q.from_user.id)
         await q.answer(ok=False, error_message="Не удалось проверить заказ. Откройте оплату в приложении заново.")
 
 
@@ -1591,12 +1606,14 @@ async def on_paid(m: Message):
     expected_stars = CATALOG[item]["price_stars"] if item else None
     if not item or uid != m.from_user.id or sp.currency != "XTR" or sp.total_amount != expected_stars:
         log.error("bad successful_payment: payload=%s currency=%s amount=%s", sp.invoice_payload, sp.currency, sp.total_amount)
-        db_log("ERROR", "bad_stars_payment", f"payload={sp.invoice_payload}", uid=m.from_user.id)
+        await asyncio.to_thread(db_log, "ERROR", "bad_stars_payment", f"payload={sp.invoice_payload}", m.from_user.id)
         return
-    get_user(uid, m.from_user.full_name, username=m.from_user.username or "")
-    if not credit_payment(uid, item, sp.telegram_payment_charge_id, stars=sp.total_amount, provider="stars"):
+    await asyncio.to_thread(get_user, uid, m.from_user.full_name, None, m.from_user.username or "")
+    credited = await asyncio.to_thread(credit_payment, uid, item, sp.telegram_payment_charge_id, sp.total_amount, 0.0, "stars")
+    if not credited:
         return
-    u, it = get_user(uid), CATALOG[item]
+    u = await asyncio.to_thread(get_user, uid)
+    it = CATALOG[item]
     if it["kind"] == "pack":
         text = f"⭐ Начислено +{it['credits']} ИИ-запросов. На балансе: {u['extra_ai_credits']}."
     elif it["kind"] == "mealplan":
@@ -1630,7 +1647,7 @@ async def reminder_loop():
         await asyncio.sleep(600)
         now_s = int(time.time())
         if now_s - last_prune_ts >= 21600:
-            prune_old_logs()
+            await asyncio.to_thread(prune_old_logs)
             last_prune_ts = now_s
         if keepalive_enabled:
             await _ping_self()
@@ -1638,7 +1655,7 @@ async def reminder_loop():
             continue
         try:
             now_utc = datetime.now(timezone.utc)
-            users = run("SELECT id, name, kcal, remind_hour, remind_on, last_reminded, tz_offset FROM users WHERE remind_on=1 AND kcal IS NOT NULL")
+            users = await arun("SELECT id, name, kcal, remind_hour, remind_on, last_reminded, tz_offset FROM users WHERE remind_on=1 AND kcal IS NOT NULL")
             kb = InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(text="🥗 Записать приём пищи", web_app=WebAppInfo(url=BASE_URL))
             ]])
@@ -1649,9 +1666,9 @@ async def reminder_loop():
                     continue
                 if local_dt.hour != (u["remind_hour"] if u["remind_hour"] is not None else 20):
                     continue
-                _, tot = day_totals(u["id"], local_day)
+                _, tot = await asyncio.to_thread(day_totals, u["id"], local_day)
                 rem_kcal = round((u["kcal"] or 0) - tot["kcal"])
-                run("UPDATE users SET last_reminded=? WHERE id=?", (local_day, u["id"]))
+                await arun("UPDATE users SET last_reminded=? WHERE id=?", (local_day, u["id"]))
                 if tot["kcal"] == 0:
                     msg = "👋 Привет! Ты ещё не записал(а) еду за сегодня. Загляни в дневник, чтобы не прервать серию!"
                 elif rem_kcal > 150:
@@ -1672,7 +1689,7 @@ ALLOWED_UPDATES = ["message", "pre_checkout_query"]
 @asynccontextmanager
 async def lifespan(app):
     global BOT_USERNAME
-    prune_old_logs()
+    await asyncio.to_thread(prune_old_logs)
     if not BOT_USERNAME:
         try:
             me = await bot.get_me()
@@ -1701,7 +1718,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     if isinstance(exc, HTTPException):
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
     log.error("Unhandled error on %s %s: %s", request.method, request.url.path, _err(exc))
-    db_log("ERROR", "unhandled_http_error", f"{request.method} {request.url.path}: {_err(exc)}")
+    await asyncio.to_thread(db_log, "ERROR", "unhandled_http_error", f"{request.method} {request.url.path}: {_err(exc)}")
     return JSONResponse(status_code=500, content={"detail": "Внутренняя ошибка сервера. Попробуйте ещё раз."})
 
 
@@ -1747,14 +1764,14 @@ def calc_streak(uid, today):
 
 
 @app.get("/api/state")
-async def state(day: str = "", today: str = "", tz: int = 180, x_init_data: str = Header(default="")):
-    tu = auth(x_init_data)
-    u = get_user(tu["id"], tu.get("first_name", ""), username=tu.get("username", ""))
+async def state(day: str = "", today: str = "", tz: int = 180, init_data: str = "", x_init_data: str = Header(default="")):
+    tu = auth(x_init_data or init_data)
+    u = await asyncio.to_thread(get_user, tu["id"], tu.get("first_name", ""), None, tu.get("username", ""))
     if -720 <= tz <= 840 and u.get("tz_offset") != tz:
-        run("UPDATE users SET tz_offset=? WHERE id=?", (tz, u["id"]))
+        await arun("UPDATE users SET tz_offset=? WHERE id=?", (tz, u["id"]))
     day = norm_day(day)
     ai = ai_status(u)
-    entries, total = day_totals(u["id"], day)
+    entries, total = await asyncio.to_thread(day_totals, u["id"], day)
     has = u["kcal"] is not None
     norm = {k: u[k] for k in ("kcal", "p", "f", "c")} if has else None
     rem = {k: norm[k] - total[k] for k in total} if has else None
@@ -1768,9 +1785,14 @@ async def state(day: str = "", today: str = "", tz: int = 180, x_init_data: str 
                 "food_pref", "remind_hour", "remind_on",
             )
         },
-    } if has else None
-    w = run("SELECT ml FROM water WHERE uid=? AND day=?", (u["id"], day))
-    recent = run(
+    } if has else {
+        "name": u.get("name") or tu.get("first_name") or "",
+        "weight": u.get("weight"),
+        "target_weight": u.get("target_weight"),
+        "start_weight": u.get("start_weight"),
+    }
+    w = await arun("SELECT ml FROM water WHERE uid=? AND day=?", (u["id"], day))
+    recent = await arun(
         "SELECT name, grams, kcal, p, f, c, last_ts FROM ("
         "SELECT DISTINCT ON (name, ROUND(COALESCE(grams, 0)::numeric)) name, grams, kcal, p, f, c, ts AS last_ts "
         "FROM entries WHERE uid=? "
@@ -1778,12 +1800,15 @@ async def state(day: str = "", today: str = "", tz: int = 180, x_init_data: str 
         ") sub ORDER BY last_ts DESC LIMIT 25",
         (u["id"],),
     )
-    weight_log = run("SELECT day, weight FROM weights WHERE uid=? ORDER BY day DESC LIMIT 30", (u["id"],))
+    weight_log = await arun("SELECT day, weight FROM weights WHERE uid=? ORDER BY day DESC LIMIT 30", (u["id"],))
     weight_log.reverse()
+    favs = await arun("SELECT * FROM favs WHERE uid=? ORDER BY id DESC LIMIT 40", (u["id"],))
+    streak = await asyncio.to_thread(calc_streak, u["id"], norm_day(today) if today else date.today().isoformat())
     ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{u['id']}" if BOT_USERNAME else ""
     return {
         "user_name": u.get("name") or tu.get("first_name") or "",
         "is_admin": int(u["id"]) in ADMIN_IDS,
+        "has_profile": has,
         "profile": prof,
         "norm": norm,
         "total": total,
@@ -1793,13 +1818,14 @@ async def state(day: str = "", today: str = "", tz: int = 180, x_init_data: str 
         "suggest": suggest(rem) if has else [],
         "water": w[0]["ml"] if w else 0,
         "water_goal": water_goal(u["weight"], u.get("workouts_per_week") or 0),
-        "streak": calc_streak(u["id"], norm_day(today) if today else date.today().isoformat()),
-        "favs": run("SELECT * FROM favs WHERE uid=? ORDER BY id DESC LIMIT 40", (u["id"],)),
+        "streak": streak,
+        "favs": favs,
         "recent": recent,
         "weight_log": weight_log,
         "ref_link": ref_link,
         "ref_count": u.get("ref_count") or 0,
         "catalog": CATALOG_LIST,
+        "yookassa_configured": _yookassa_configured(),
         "support": {"handle": SUPPORT_HANDLE, "url": SUPPORT_URL},
         "channel": {"handle": CHANNEL_HANDLE, "url": CHANNEL_URL},
     }
@@ -1811,41 +1837,41 @@ class SupportRequestCreate(BaseModel):
 
 
 @app.post("/api/support/request")
-async def create_support_request(r: SupportRequestCreate, x_init_data: str = Header(default="")):
-    tu = auth(x_init_data)
-    u = get_user(tu["id"], tu.get("first_name", ""), username=tu.get("username", ""))
+async def create_support_request(r: SupportRequestCreate, init_data: str = "", x_init_data: str = Header(default="")):
+    tu = auth(x_init_data or init_data)
+    u = await asyncio.to_thread(get_user, tu["id"], tu.get("first_name", ""), None, tu.get("username", ""))
     msg_txt = re.sub(r"\s+", " ", r.message.strip())
     if len(msg_txt) < 3:
         raise HTTPException(400, "Опишите ваш вопрос чуть подробнее")
     now_ts = int(time.time())
-    open_cnt = run("SELECT COUNT(*) AS c FROM support_requests WHERE uid=? AND status IN ('new','in_progress')", (u["id"],))
+    open_cnt = await arun("SELECT COUNT(*) AS c FROM support_requests WHERE uid=? AND status IN ('new','in_progress')", (u["id"],))
     if (open_cnt[0]["c"] if open_cnt else 0) >= 5:
         raise HTTPException(429, "У вас уже есть 5 активных обращений. Дождитесь ответа администратора.")
-    run(
+    await arun(
         "INSERT INTO support_requests(uid, username, user_name, category, message, status, created_at, updated_at) "
         "VALUES(?,?,?,?,?,?,?,?)",
         (u["id"], u.get("username") or "", u.get("name") or "", r.category, msg_txt, "new", now_ts, now_ts),
     )
-    db_log("INFO", "support_request", f"[{r.category}] @{u.get('username') or '-'}: {msg_txt[:100]}", uid=u["id"])
+    await asyncio.to_thread(db_log, "INFO", "support_request", f"[{r.category}] @{u.get('username') or '-'}: {msg_txt[:100]}", u["id"])
     return {"ok": True}
 
 
 @app.get("/api/suggest")
-async def api_suggest(day: str = "", mode: str = "", seed: int = 0, x_init_data: str = Header(default="")):
-    tu = auth(x_init_data)
-    u = get_user(tu["id"], tu.get("first_name", ""), username=tu.get("username", ""))
+async def api_suggest(day: str = "", mode: str = "", seed: int = 0, init_data: str = "", x_init_data: str = Header(default="")):
+    tu = auth(x_init_data or init_data)
+    u = await asyncio.to_thread(get_user, tu["id"], tu.get("first_name", ""), None, tu.get("username", ""))
     if u["kcal"] is None:
         return {"items": []}
-    _, t = day_totals(u["id"], norm_day(day))
+    _, t = await asyncio.to_thread(day_totals, u["id"], norm_day(day))
     return {"items": suggest({k: u[k] - t[k] for k in t}, mode if mode in ("protein", "quick", "light") else "", seed)}
 
 
 @app.get("/api/week")
-async def week(day: str = "", x_init_data: str = Header(default="")):
-    tu = auth(x_init_data)
+async def week(day: str = "", init_data: str = "", x_init_data: str = Header(default="")):
+    tu = auth(x_init_data or init_data)
     end = date.fromisoformat(norm_day(day))
     start = end - timedelta(days=6)
-    rows = run("SELECT day, SUM(kcal) kcal, SUM(p) p, SUM(f) f, SUM(c) c FROM entries "
+    rows = await arun("SELECT day, SUM(kcal) kcal, SUM(p) p, SUM(f) f, SUM(c) c FROM entries "
                "WHERE uid=? AND day BETWEEN ? AND ? GROUP BY day", (tu["id"], start.isoformat(), end.isoformat()))
     by = {r["day"]: r for r in rows}
     out = []
@@ -1879,9 +1905,9 @@ class Profile(BaseModel):
 
 
 @app.post("/api/profile")
-async def save_profile(p: Profile, x_init_data: str = Header(default="")):
-    tu = auth(x_init_data)
-    cur_u = get_user(tu["id"], tu.get("first_name", ""), username=tu.get("username", ""))
+async def save_profile(p: Profile, init_data: str = "", x_init_data: str = Header(default="")):
+    tu = auth(x_init_data or init_data)
+    cur_u = await asyncio.to_thread(get_user, tu["id"], tu.get("first_name", ""), None, tu.get("username", ""))
     ai_note = ""
     if p.manual:
         if None in (p.kcal, p.p, p.f, p.c):
@@ -1917,7 +1943,7 @@ async def save_profile(p: Profile, x_init_data: str = Header(default="")):
 
     start_w = (cur_u.get("start_weight") or p.weight) if p.target_weight else None
     clean_name = _sanitize_name(p.name or "", cur_u.get("name") or tu.get("first_name") or "")
-    run(
+    await arun(
         "UPDATE users SET name=?,sex=?,age=?,height=?,weight=?,start_weight=?,act=?,goal=?,"
         "workouts_per_week=?,workout_type=?,food_pref=?,target_weight=?,pace=?,manual=?,"
         "kcal=?,p=?,f=?,c=?,remind_on=?,remind_hour=? WHERE id=?",
@@ -1927,7 +1953,7 @@ async def save_profile(p: Profile, x_init_data: str = Header(default="")):
             int(p.manual), n["kcal"], n["p"], n["f"], n["c"], int(p.remind_on), p.remind_hour, tu["id"],
         ),
     )
-    run(
+    await arun(
         "INSERT INTO weights(uid,day,weight) VALUES(?,?,?) ON CONFLICT(uid,day) DO UPDATE SET weight=EXCLUDED.weight",
         (tu["id"], date.today().isoformat(), p.weight),
     )
@@ -1940,15 +1966,19 @@ class WeightLogReq(BaseModel):
 
 
 @app.post("/api/weight")
-async def log_weight(r: WeightLogReq, x_init_data: str = Header(default="")):
-    tu = auth(x_init_data)
+async def log_weight(r: WeightLogReq, init_data: str = "", x_init_data: str = Header(default="")):
+    tu = auth(x_init_data or init_data)
+    u = await asyncio.to_thread(get_user, tu["id"], tu.get("first_name", ""), None, tu.get("username", ""))
     d = norm_day(r.day)
-    run(
+    await arun(
         "INSERT INTO weights(uid,day,weight) VALUES(?,?,?) ON CONFLICT(uid,day) DO UPDATE SET weight=EXCLUDED.weight",
         (tu["id"], d, r.weight),
     )
-    run("UPDATE users SET weight=? WHERE id=?", (r.weight, tu["id"]))
-    return {"ok": True}
+    if not u.get("start_weight") and u.get("target_weight"):
+        await arun("UPDATE users SET weight=?, start_weight=? WHERE id=?", (r.weight, r.weight, tu["id"]))
+    else:
+        await arun("UPDATE users SET weight=? WHERE id=?", (r.weight, tu["id"]))
+    return {"ok": True, "weight": r.weight}
 
 
 class AddReq(BaseModel):
@@ -1959,12 +1989,12 @@ class AddReq(BaseModel):
 
 
 @app.post("/api/entry")
-async def add_entry(r: AddReq, x_init_data: str = Header(default="")):
-    tu = auth(x_init_data)
-    get_user(tu["id"], tu.get("first_name", ""), username=tu.get("username", ""))
+async def add_entry(r: AddReq, init_data: str = "", x_init_data: str = Header(default="")):
+    tu = auth(x_init_data or init_data)
+    await asyncio.to_thread(get_user, tu["id"], tu.get("first_name", ""), None, tu.get("username", ""))
     day = norm_day(r.day)
     for i, it in enumerate(r.items):
-        run("INSERT INTO entries(uid,day,name,grams,kcal,p,f,c,src,ts,meal) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        await arun("INSERT INTO entries(uid,day,name,grams,kcal,p,f,c,src,ts,meal) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (tu["id"], day, it.name, it.grams, it.kcal, it.p, it.f, it.c, r.src, int(time.time() * 1000) + i, r.meal))
     return {"ok": True}
 
@@ -1976,14 +2006,14 @@ class CopyMealReq(BaseModel):
 
 
 @app.post("/api/copy-meal")
-async def copy_meal(r: CopyMealReq, x_init_data: str = Header(default="")):
-    tu = auth(x_init_data)
+async def copy_meal(r: CopyMealReq, init_data: str = "", x_init_data: str = Header(default="")):
+    tu = auth(x_init_data or init_data)
     fd, td = norm_day(r.from_day), norm_day(r.to_day)
-    rows = run("SELECT * FROM entries WHERE uid=? AND day=? AND meal=? ORDER BY ts", (tu["id"], fd, r.meal))
+    rows = await arun("SELECT * FROM entries WHERE uid=? AND day=? AND meal=? ORDER BY ts", (tu["id"], fd, r.meal))
     if not rows:
         raise HTTPException(404, "В выбранном приёме пищи ничего нет")
     for i, e in enumerate(rows):
-        run("INSERT INTO entries(uid,day,name,grams,kcal,p,f,c,src,ts,meal) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        await arun("INSERT INTO entries(uid,day,name,grams,kcal,p,f,c,src,ts,meal) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (tu["id"], td, e["name"], e["grams"], e["kcal"], e["p"], e["f"], e["c"], "copy", int(time.time() * 1000) + i, r.meal))
     return {"ok": True, "count": len(rows)}
 
@@ -1993,22 +2023,33 @@ class EditReq(BaseModel):
 
 
 @app.patch("/api/entry/{eid}")
-async def edit_entry(eid: int, r: EditReq, x_init_data: str = Header(default="")):
-    tu = auth(x_init_data)
-    rows = run("SELECT * FROM entries WHERE id=? AND uid=?", (eid, tu["id"]))
+async def edit_entry(eid: int, r: EditReq, init_data: str = "", x_init_data: str = Header(default="")):
+    tu = auth(x_init_data or init_data)
+    rows = await arun("SELECT * FROM entries WHERE id=? AND uid=?", (eid, tu["id"]))
     if not rows:
         raise HTTPException(404, "Запись не найдена")
     e = rows[0]
-    k = r.grams / e["grams"] if e["grams"] > 0 else 1
-    run("UPDATE entries SET grams=?,kcal=?,p=?,f=?,c=? WHERE id=?",
-        (r.grams, e["kcal"] * k, e["p"] * k, e["f"] * k, e["c"] * k, eid))
+    old_g = float(e.get("grams") or 0)
+    if old_g > 0:
+        k = r.grams / old_g
+        new_kcal = round(e["kcal"] * k, 1)
+        new_p = round(e["p"] * k, 1)
+        new_f = round(e["f"] * k, 1)
+        new_c = round(e["c"] * k, 1)
+    else:
+        # Если вес ранее не был указан (0 г), сохраняем исходные КБЖУ, просто проставляя граммовку
+        new_kcal, new_p, new_f, new_c = e["kcal"], e["p"], e["f"], e["c"]
+    await arun(
+        "UPDATE entries SET grams=?,kcal=?,p=?,f=?,c=? WHERE id=? AND uid=?",
+        (round(r.grams, 1), new_kcal, new_p, new_f, new_c, eid, tu["id"]),
+    )
     return {"ok": True}
 
 
 @app.delete("/api/entry/{eid}")
-async def del_entry(eid: int, x_init_data: str = Header(default="")):
-    tu = auth(x_init_data)
-    run("DELETE FROM entries WHERE id=? AND uid=?", (eid, tu["id"]))
+async def del_entry(eid: int, init_data: str = "", x_init_data: str = Header(default="")):
+    tu = auth(x_init_data or init_data)
+    await arun("DELETE FROM entries WHERE id=? AND uid=?", (eid, tu["id"]))
     return {"ok": True}
 
 
@@ -2018,12 +2059,12 @@ class WaterReq(BaseModel):
 
 
 @app.post("/api/water")
-async def add_water(r: WaterReq, x_init_data: str = Header(default="")):
-    tu = auth(x_init_data)
+async def add_water(r: WaterReq, init_data: str = "", x_init_data: str = Header(default="")):
+    tu = auth(x_init_data or init_data)
     day = norm_day(r.day)
-    cur = run("SELECT ml FROM water WHERE uid=? AND day=?", (tu["id"], day))
+    cur = await arun("SELECT ml FROM water WHERE uid=? AND day=?", (tu["id"], day))
     new = max(0, min(10000, (cur[0]["ml"] if cur else 0) + r.ml))
-    run(
+    await arun(
         "INSERT INTO water(uid,day,ml) VALUES(?,?,?) ON CONFLICT(uid,day) DO UPDATE SET ml=EXCLUDED.ml",
         (tu["id"], day, new),
     )
@@ -2031,18 +2072,19 @@ async def add_water(r: WaterReq, x_init_data: str = Header(default="")):
 
 
 @app.post("/api/fav")
-async def add_fav(it: Item, x_init_data: str = Header(default="")):
-    tu = auth(x_init_data)
-    if not run("SELECT id FROM favs WHERE uid=? AND name=? AND ROUND(COALESCE(grams,0)::numeric)=ROUND(?::numeric)", (tu["id"], it.name, it.grams)):
-        run("INSERT INTO favs(uid,name,grams,kcal,p,f,c) VALUES(?,?,?,?,?,?,?)",
+async def add_fav(it: Item, init_data: str = "", x_init_data: str = Header(default="")):
+    tu = auth(x_init_data or init_data)
+    existing = await arun("SELECT id FROM favs WHERE uid=? AND name=? AND ROUND(COALESCE(grams,0)::numeric)=ROUND(?::numeric)", (tu["id"], it.name, it.grams))
+    if not existing:
+        await arun("INSERT INTO favs(uid,name,grams,kcal,p,f,c) VALUES(?,?,?,?,?,?,?)",
             (tu["id"], it.name, it.grams, it.kcal, it.p, it.f, it.c))
     return {"ok": True}
 
 
 @app.delete("/api/fav/{fid}")
-async def del_fav(fid: int, x_init_data: str = Header(default="")):
-    tu = auth(x_init_data)
-    run("DELETE FROM favs WHERE id=? AND uid=?", (fid, tu["id"]))
+async def del_fav(fid: int, init_data: str = "", x_init_data: str = Header(default="")):
+    tu = auth(x_init_data or init_data)
+    await arun("DELETE FROM favs WHERE id=? AND uid=?", (fid, tu["id"]))
     return {"ok": True}
 
 
@@ -2053,15 +2095,15 @@ class AIReq(BaseModel):
 
 
 @app.post("/api/ai")
-async def ai_analyze(r: AIReq, x_init_data: str = Header(default="")):
-    tu = auth(x_init_data)
-    u = get_user(tu["id"], tu.get("first_name", ""), username=tu.get("username", ""))
+async def ai_analyze(r: AIReq, init_data: str = "", x_init_data: str = Header(default="")):
+    tu = auth(x_init_data or init_data)
+    u = await asyncio.to_thread(get_user, tu["id"], tu.get("first_name", ""), None, tu.get("username", ""))
     if not r.text.strip() and not r.image:
         raise HTTPException(400, "Опишите еду или приложите фото")
     if r.image:
         split_image(r.image)
 
-    source, period_month = consume_ai_quota(u["id"])
+    source, period_month = await asyncio.to_thread(consume_ai_quota, u["id"])
     if not source:
         raise HTTPException(
             402,
@@ -2070,9 +2112,10 @@ async def ai_analyze(r: AIReq, x_init_data: str = Header(default="")):
     try:
         items = await ask_ai(r.text, r.image, label_mode=r.label_mode)
     except BaseException:
-        refund_ai_quota(u["id"], source, period_month)
+        await asyncio.to_thread(refund_ai_quota, u["id"], source, period_month)
         raise
-    return {"items": items, "source": source, "ai": ai_status(get_user(u["id"]))}
+    updated_u = await asyncio.to_thread(get_user, u["id"])
+    return {"items": items, "source": source, "ai": ai_status(updated_u)}
 
 
 class MealPlanReq(BaseModel):
@@ -2081,13 +2124,13 @@ class MealPlanReq(BaseModel):
 
 
 @app.post("/api/ai/mealplan")
-async def ai_mealplan(r: MealPlanReq, x_init_data: str = Header(default="")):
-    tu = auth(x_init_data)
-    u = get_user(tu["id"], tu.get("first_name", ""), username=tu.get("username", ""))
+async def ai_mealplan(r: MealPlanReq, init_data: str = "", x_init_data: str = Header(default="")):
+    tu = auth(x_init_data or init_data)
+    u = await asyncio.to_thread(get_user, tu["id"], tu.get("first_name", ""), None, tu.get("username", ""))
     if u["kcal"] is None:
-        raise HTTPException(400, "Сначала заполните профиль")
+        raise HTTPException(400, "Сначала заполните профиль и расчёт КБЖУ")
 
-    mp_source = consume_mealplan_quota(u["id"])
+    mp_source = await asyncio.to_thread(consume_mealplan_quota, u["id"])
     if not mp_source:
         mp_rub = CATALOG["mealplan_1"]["price_rub"]
         mp_stars = CATALOG["mealplan_1"]["price_stars"]
@@ -2096,7 +2139,7 @@ async def ai_mealplan(r: MealPlanReq, x_init_data: str = Header(default="")):
             f"Бесплатный рацион уже использован. Дальше генерация доступна в PRO или по разовому билету ({mp_rub} ₽ / {mp_stars} ⭐).",
         )
 
-    _, tot = day_totals(u["id"], norm_day(r.day))
+    _, tot = await asyncio.to_thread(day_totals, u["id"], norm_day(r.day))
     rem = {k: (u[k] or 0) - tot[k] for k in tot}
     if rem["kcal"] < 250:
         rem = {k: u[k] or 0 for k in ("kcal", "p", "f", "c")}
@@ -2113,9 +2156,10 @@ async def ai_mealplan(r: MealPlanReq, x_init_data: str = Header(default="")):
             },
         )
     except BaseException:
-        refund_mealplan_quota(u["id"], mp_source)
+        await asyncio.to_thread(refund_mealplan_quota, u["id"], mp_source)
         raise
-    return {**plan_data, "plan_source": mp_source, "ai": ai_status(get_user(u["id"]))}
+    updated_u = await asyncio.to_thread(get_user, u["id"])
+    return {**plan_data, "plan_source": mp_source, "ai": ai_status(updated_u)}
 
 
 TariffId = Literal["pack_10", "pack_30", "sub_30d", "mealplan_1"]
@@ -2126,9 +2170,9 @@ class InvoiceReq(BaseModel):
 
 
 @app.post("/api/billing/create-invoice")
-async def create_invoice(r: InvoiceReq, x_init_data: str = Header(default="")):
-    tu = auth(x_init_data)
-    get_user(tu["id"], tu.get("first_name", ""), username=tu.get("username", ""))
+async def create_invoice(r: InvoiceReq, init_data: str = "", x_init_data: str = Header(default="")):
+    tu = auth(x_init_data or init_data)
+    await asyncio.to_thread(get_user, tu["id"], tu.get("first_name", ""), None, tu.get("username", ""))
     it = CATALOG[r.item_id]
     stars_amount = int(it["price_stars"])
     payload = f"{tu['id']}:{r.item_id}:{uuid.uuid4().hex[:12]}"
@@ -2143,7 +2187,7 @@ async def create_invoice(r: InvoiceReq, x_init_data: str = Header(default="")):
         )
     except Exception as e:
         log.error("create_invoice_link failed: %s", _err(e))
-        db_log("ERROR", "stars_invoice_error", _err(e), uid=tu["id"])
+        await asyncio.to_thread(db_log, "ERROR", "stars_invoice_error", _err(e), tu["id"])
         raise HTTPException(502, _err(f"Telegram: не удалось создать счёт ({type(e).__name__}: {e})"))
     return {"invoice_url": link, "item_id": r.item_id, "stars": stars_amount}
 
@@ -2165,9 +2209,9 @@ class YooKassaCreateReq(BaseModel):
 
 
 @app.post("/api/billing/yookassa/create")
-async def create_yookassa_payment(r: YooKassaCreateReq, x_init_data: str = Header(default="")):
-    tu = auth(x_init_data)
-    get_user(tu["id"], tu.get("first_name", ""), username=tu.get("username", ""))
+async def create_yookassa_payment(r: YooKassaCreateReq, init_data: str = "", x_init_data: str = Header(default="")):
+    tu = auth(x_init_data or init_data)
+    await asyncio.to_thread(get_user, tu["id"], tu.get("first_name", ""), None, tu.get("username", ""))
     if not _yookassa_configured():
         raise HTTPException(
             503,
@@ -2205,12 +2249,12 @@ async def create_yookassa_payment(r: YooKassaCreateReq, x_init_data: str = Heade
             )
     except Exception as e:
         log.error("YooKassa create payment network error: %s", _err(e))
-        db_log("ERROR", "yookassa_create_net_err", _err(e), uid=tu["id"])
+        await asyncio.to_thread(db_log, "ERROR", "yookassa_create_net_err", _err(e), tu["id"])
         raise HTTPException(502, "Не удалось связаться с ЮKassa. Попробуйте позже.")
 
     if resp.status_code not in (200, 201):
         log.error("YooKassa create payment HTTP %s: %s", resp.status_code, _err(resp.text[:300]))
-        db_log("ERROR", "yookassa_create_http_err", f"{resp.status_code}: {resp.text[:160]}", uid=tu["id"])
+        await asyncio.to_thread(db_log, "ERROR", "yookassa_create_http_err", f"{resp.status_code}: {resp.text[:160]}", tu["id"])
         raise HTTPException(502, "ЮKassa отклонила создание платежа. Попробуйте ещё раз.")
 
     data = resp.json()
@@ -2258,7 +2302,7 @@ async def yookassa_webhook(req: Request):
             )
     except Exception as e:
         log.error("YooKassa verify payment error (%s): %s", payment_id, _err(e))
-        db_log("ERROR", "yookassa_verify_err", f"{payment_id}: {_err(e)}")
+        await asyncio.to_thread(db_log, "ERROR", "yookassa_verify_err", f"{payment_id}: {_err(e)}")
         raise HTTPException(502, "Failed to verify payment")
 
     if verify_resp.status_code != 200:
@@ -2287,20 +2331,22 @@ async def yookassa_webhook(req: Request):
     except Exception:
         amt_val = float(CATALOG[item_id]["price_rub"])
 
-    get_user(uid)
-    credited = credit_payment(
-        uid=uid,
-        item_id=item_id,
-        charge_id=f"yk:{payment_id}",
-        stars=0,
-        amount_rub=amt_val,
-        provider="yookassa",
-        status="succeeded",
-        metadata=meta,
+    await asyncio.to_thread(get_user, uid)
+    credited = await asyncio.to_thread(
+        credit_payment,
+        uid,
+        item_id,
+        f"yk:{payment_id}",
+        0,
+        amt_val,
+        "yookassa",
+        "succeeded",
+        meta,
     )
     if credited:
         try:
-            u, it = get_user(uid), CATALOG[item_id]
+            u = await asyncio.to_thread(get_user, uid)
+            it = CATALOG[item_id]
             if it["kind"] == "pack":
                 msg = f"✅ Оплата ({int(amt_val)} ₽) прошла! Начислено +{it['credits']} ИИ-запросов. Баланс: {u['extra_ai_credits']}."
             elif it["kind"] == "mealplan":
@@ -2351,6 +2397,7 @@ def _serialize_admin_user(u: dict) -> dict:
         "ref_count": int(u.get("ref_count") or 0),
         "goal": u.get("goal") or "",
         "weight": u.get("weight"),
+        "target_weight": u.get("target_weight"),
         "kcal": u.get("kcal"),
         "created_at": int(u.get("created_at") or 0),
         "last_seen": int(u.get("last_seen") or 0),
@@ -2358,8 +2405,8 @@ def _serialize_admin_user(u: dict) -> dict:
 
 
 @app.get("/api/admin/stats")
-async def admin_stats(force: int = 0, x_init_data: str = Header(default="")):
-    require_admin(x_init_data)
+async def admin_stats(force: int = 0, init_data: str = "", x_init_data: str = Header(default="")):
+    require_admin(x_init_data or init_data)
     global _admin_stats_cache
     now_ts = int(time.time())
     if not force and _admin_stats_cache and (now_ts - _admin_stats_cache[0] < 30):
@@ -2367,7 +2414,7 @@ async def admin_stats(force: int = 0, x_init_data: str = Header(default="")):
 
     today_str = date.today().isoformat()
     cur_month = _current_month_str()
-    u_agg = run(
+    u_agg = (await arun(
         "SELECT "
         "COUNT(*) AS total_users, "
         "COUNT(*) FILTER (WHERE pro_until > ?) AS active_pro, "
@@ -2379,9 +2426,9 @@ async def admin_stats(force: int = 0, x_init_data: str = Header(default="")):
         "COALESCE(SUM(trial_used) FILTER (WHERE trial_month = ?), 0) AS ai_month "
         "FROM users",
         (now_ts, now_ts - 86400, now_ts - 7 * 86400, now_ts - 86400, today_str, cur_month, cur_month),
-    )[0]
+    ))[0]
 
-    p_agg = run(
+    p_agg = (await arun(
         "SELECT "
         "COUNT(*) AS total_payments, "
         "COALESCE(SUM(amount_rub), 0) AS total_rub, "
@@ -2390,18 +2437,18 @@ async def admin_stats(force: int = 0, x_init_data: str = Header(default="")):
         "COALESCE(SUM(stars) FILTER (WHERE ts >= ?), 0) AS stars_30d "
         "FROM payments WHERE status='succeeded'",
         (now_ts - 30 * 86400, now_ts - 30 * 86400),
-    )[0]
+    ))[0]
 
-    req_agg = run(
+    req_agg = (await arun(
         "SELECT COUNT(*) FILTER (WHERE status IN ('new','in_progress')) AS open_requests FROM support_requests"
-    )[0]
-    log_agg = run(
+    ))[0]
+    log_agg = (await arun(
         "SELECT COUNT(*) AS total_logs, COUNT(*) FILTER (WHERE level='ERROR' AND ts >= ?) AS errors_24h FROM bot_logs",
         (now_ts - 86400,),
-    )[0]
+    ))[0]
 
     start_7d = now_ts - 6 * 86400
-    pay_rows = run(
+    pay_rows = await arun(
         "SELECT TO_CHAR(TO_TIMESTAMP(ts) AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS d, "
         "COUNT(*) AS cnt, COALESCE(SUM(amount_rub), 0) AS rub, COALESCE(SUM(stars), 0) AS stars "
         "FROM payments WHERE status='succeeded' AND ts >= ? GROUP BY d ORDER BY d",
@@ -2437,8 +2484,8 @@ async def admin_stats(force: int = 0, x_init_data: str = Header(default="")):
 
 
 @app.get("/api/admin/users")
-async def admin_users(q: str = "", filter: str = "all", limit: int = 30, offset: int = 0, x_init_data: str = Header(default="")):
-    require_admin(x_init_data)
+async def admin_users(q: str = "", filter: str = "all", limit: int = 30, offset: int = 0, init_data: str = "", x_init_data: str = Header(default="")):
+    require_admin(x_init_data or init_data)
     lim = max(1, min(int(limit or 30), 100))
     off = max(0, int(offset or 0))
     now_ts = int(time.time())
@@ -2462,8 +2509,8 @@ async def admin_users(q: str = "", filter: str = "all", limit: int = 30, offset:
             params.extend([f"%{clean_q}%", f"%{clean_q}%"])
 
     where_sql = " AND ".join(where)
-    total = run(f"SELECT COUNT(*) AS c FROM users WHERE {where_sql}", tuple(params))[0]["c"]
-    rows = run(
+    total = (await arun(f"SELECT COUNT(*) AS c FROM users WHERE {where_sql}", tuple(params)))[0]["c"]
+    rows = await arun(
         f"SELECT * FROM users WHERE {where_sql} ORDER BY last_seen DESC, id DESC LIMIT ? OFFSET ?",
         tuple([*params, lim, off]),
     )
@@ -2479,9 +2526,9 @@ class AdminSubActionReq(BaseModel):
 
 
 @app.post("/api/admin/users/action")
-async def admin_user_action(r: AdminSubActionReq, x_init_data: str = Header(default="")):
-    admin = require_admin(x_init_data)
-    u = _find_user_by_target(r.target)
+async def admin_user_action(r: AdminSubActionReq, init_data: str = "", x_init_data: str = Header(default="")):
+    admin = require_admin(x_init_data or init_data)
+    u = await asyncio.to_thread(_find_user_by_target, r.target)
     if not u:
         raise HTTPException(404, f"Пользователь «{r.target}» не найден. Он должен хотя бы раз запустить бота.")
 
@@ -2493,44 +2540,44 @@ async def admin_user_action(r: AdminSubActionReq, x_init_data: str = Header(defa
     if r.action == "grant_pro":
         cur_until = int(u.get("pro_until") or 0)
         new_until = int(max(now_ts, cur_until) + r.days * 86400)
-        run("UPDATE users SET pro_until=? WHERE id=?", (new_until, uid))
+        await arun("UPDATE users SET pro_until=? WHERE id=?", (new_until, uid))
         dt_str = datetime.fromtimestamp(new_until).strftime("%d.%m.%Y")
         notify_msg = f"👑 Администратор активировал вам подписку <b>SnapEat Pro</b> на {r.days} дн. (до {dt_str})!"
         log_detail = f"grant_pro +{r.days}d -> {dt_str}"
 
     elif r.action == "revoke_pro":
-        run("UPDATE users SET pro_until=0 WHERE id=?", (uid,))
+        await arun("UPDATE users SET pro_until=0 WHERE id=?", (uid,))
         notify_msg = "ℹ️ Ваша подписка SnapEat Pro была отключена администратором."
         log_detail = "revoke_pro"
 
     elif r.action == "add_credits":
         cur_c = int(u.get("extra_ai_credits") or 0)
         new_c = max(0, cur_c + r.amount)
-        run("UPDATE users SET extra_ai_credits=? WHERE id=?", (new_c, uid))
+        await arun("UPDATE users SET extra_ai_credits=? WHERE id=?", (new_c, uid))
         if r.amount > 0:
             notify_msg = f"🎁 Вам начислено +{r.amount} бонусных ИИ-запросов! Текущий баланс: {new_c}."
         log_detail = f"add_credits {r.amount:+d} (now {new_c})"
 
     elif r.action == "set_credits":
         new_c = max(0, r.amount)
-        run("UPDATE users SET extra_ai_credits=? WHERE id=?", (new_c, uid))
+        await arun("UPDATE users SET extra_ai_credits=? WHERE id=?", (new_c, uid))
         log_detail = f"set_credits -> {new_c}"
 
     elif r.action == "add_mealplan":
         cur_m = int(u.get("mealplan_credits") or 0)
         new_m = max(0, cur_m + r.amount)
-        run("UPDATE users SET mealplan_credits=? WHERE id=?", (new_m, uid))
+        await arun("UPDATE users SET mealplan_credits=? WHERE id=?", (new_m, uid))
         if r.amount > 0:
             notify_msg = f"🥗 Вам начислено +{r.amount} билетов на ИИ-рацион! Текущий баланс: {new_m}."
         log_detail = f"add_mealplan {r.amount:+d} (now {new_m})"
 
     elif r.action == "reset_limits":
-        run("UPDATE users SET trial_used=0, ai_n=0, pro_month_used=0, free_mealplan_used=0 WHERE id=?", (uid,))
+        await arun("UPDATE users SET trial_used=0, ai_n=0, pro_month_used=0, free_mealplan_used=0 WHERE id=?", (uid,))
         log_detail = "reset_limits"
 
     global _admin_stats_cache
     _admin_stats_cache = None
-    db_log("INFO", "admin_user_action", f"admin={admin['id']} -> @{u.get('username') or uid}: {log_detail}", uid=uid)
+    await asyncio.to_thread(db_log, "INFO", "admin_user_action", f"admin={admin['id']} -> @{u.get('username') or uid}: {log_detail}", uid)
 
     if r.notify and notify_msg:
         try:
@@ -2538,13 +2585,54 @@ async def admin_user_action(r: AdminSubActionReq, x_init_data: str = Header(defa
         except Exception as e:
             log.warning("Failed to notify user %s after admin action: %s", uid, _err(e))
 
-    updated = run("SELECT * FROM users WHERE id=?", (uid,))[0]
+    updated = (await arun("SELECT * FROM users WHERE id=?", (uid,)))[0]
     return {"ok": True, "user": _serialize_admin_user(updated)}
 
 
+class AdminBroadcastReq(BaseModel):
+    audience: Literal["all", "pro", "free"] = "all"
+    message: str = Field(min_length=3, max_length=2000)
+
+
+@app.post("/api/admin/broadcast")
+async def admin_broadcast(r: AdminBroadcastReq, init_data: str = "", x_init_data: str = Header(default="")):
+    admin = require_admin(x_init_data or init_data)
+    now_ts = int(time.time())
+    if r.audience == "pro":
+        rows = await arun("SELECT id FROM users WHERE pro_until > ?", (now_ts,))
+    elif r.audience == "free":
+        rows = await arun("SELECT id FROM users WHERE COALESCE(pro_until, 0) <= ?", (now_ts,))
+    else:
+        rows = await arun("SELECT id FROM users")
+
+    sent = 0
+    failed = 0
+    safe_msg = html.escape(r.message.strip())
+    kb = (
+        InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🥗 Открыть SnapEat", web_app=WebAppInfo(url=BASE_URL))]])
+        if BASE_URL else None
+    )
+    for row in rows[:500]:
+        try:
+            await bot.send_message(int(row["id"]), safe_msg, parse_mode="HTML", reply_markup=kb)
+            sent += 1
+            await asyncio.sleep(0.04)
+        except Exception:
+            failed += 1
+
+    await asyncio.to_thread(
+        db_log,
+        "INFO",
+        "admin_broadcast",
+        f"admin={admin['id']} aud={r.audience} sent={sent} failed={failed}",
+        admin["id"],
+    )
+    return {"ok": True, "sent": sent, "failed": failed}
+
+
 @app.get("/api/admin/payments")
-async def admin_payments(q: str = "", limit: int = 40, offset: int = 0, x_init_data: str = Header(default="")):
-    require_admin(x_init_data)
+async def admin_payments(q: str = "", limit: int = 40, offset: int = 0, init_data: str = "", x_init_data: str = Header(default="")):
+    require_admin(x_init_data or init_data)
     lim = max(1, min(int(limit or 40), 100))
     off = max(0, int(offset or 0))
     where = ["1=1"]
@@ -2559,7 +2647,7 @@ async def admin_payments(q: str = "", limit: int = 40, offset: int = 0, x_init_d
             where.append("(LOWER(COALESCE(u.username,'')) LIKE ? OR LOWER(COALESCE(u.name,'')) LIKE ? OR LOWER(p.item_id) LIKE ? OR LOWER(p.charge_id) LIKE ?)")
             params.extend([f"%{cq}%", f"%{cq}%", f"%{cq}%", f"%{cq}%"])
     w_sql = " AND ".join(where)
-    rows = run(
+    rows = await arun(
         f"SELECT p.*, COALESCE(u.username,'') AS username, COALESCE(u.name,'') AS user_name "
         f"FROM payments p LEFT JOIN users u ON u.id = p.uid "
         f"WHERE {w_sql} ORDER BY p.ts DESC LIMIT ? OFFSET ?",
@@ -2572,21 +2660,21 @@ async def admin_payments(q: str = "", limit: int = 40, offset: int = 0, x_init_d
 
 
 @app.get("/api/admin/requests")
-async def admin_requests(status: str = "open", limit: int = 40, x_init_data: str = Header(default="")):
-    require_admin(x_init_data)
+async def admin_requests(status: str = "open", limit: int = 40, init_data: str = "", x_init_data: str = Header(default="")):
+    require_admin(x_init_data or init_data)
     lim = max(1, min(int(limit or 40), 100))
     if status == "open":
-        rows = run(
+        rows = await arun(
             "SELECT * FROM support_requests WHERE status IN ('new','in_progress') ORDER BY created_at DESC LIMIT ?",
             (lim,),
         )
     elif status in ("new", "in_progress", "done", "rejected"):
-        rows = run(
+        rows = await arun(
             "SELECT * FROM support_requests WHERE status=? ORDER BY created_at DESC LIMIT ?",
             (status, lim),
         )
     else:
-        rows = run("SELECT * FROM support_requests ORDER BY created_at DESC LIMIT ?", (lim,))
+        rows = await arun("SELECT * FROM support_requests ORDER BY created_at DESC LIMIT ?", (lim,))
     return {"requests": rows}
 
 
@@ -2597,21 +2685,21 @@ class AdminRequestUpdate(BaseModel):
 
 
 @app.post("/api/admin/requests/{req_id}")
-async def admin_update_request(req_id: int, r: AdminRequestUpdate, x_init_data: str = Header(default="")):
-    admin = require_admin(x_init_data)
-    rows = run("SELECT * FROM support_requests WHERE id=?", (req_id,))
+async def admin_update_request(req_id: int, r: AdminRequestUpdate, init_data: str = "", x_init_data: str = Header(default="")):
+    admin = require_admin(x_init_data or init_data)
+    rows = await arun("SELECT * FROM support_requests WHERE id=?", (req_id,))
     if not rows:
         raise HTTPException(404, "Запрос не найден")
     sr = rows[0]
     now_ts = int(time.time())
     note = (r.admin_note or "").strip()[:400]
-    run(
+    await arun(
         "UPDATE support_requests SET status=?, admin_note=?, updated_at=? WHERE id=?",
         (r.status, note, now_ts, req_id),
     )
     global _admin_stats_cache
     _admin_stats_cache = None
-    db_log("INFO", "admin_request_upd", f"admin={admin['id']} req=#{req_id} -> {r.status}", uid=sr["uid"])
+    await asyncio.to_thread(db_log, "INFO", "admin_request_upd", f"admin={admin['id']} req=#{req_id} -> {r.status}", sr["uid"])
 
     reply_txt = (r.reply_to_user or "").strip()
     sent_ok = False
@@ -2630,8 +2718,8 @@ async def admin_update_request(req_id: int, r: AdminRequestUpdate, x_init_data: 
 
 
 @app.get("/api/admin/logs")
-async def admin_logs(level: str = "", q: str = "", limit: int = 60, x_init_data: str = Header(default="")):
-    require_admin(x_init_data)
+async def admin_logs(level: str = "", q: str = "", limit: int = 60, init_data: str = "", x_init_data: str = Header(default="")):
+    require_admin(x_init_data or init_data)
     lim = max(1, min(int(limit or 60), 150))
     where = ["1=1"]
     params: list = []
@@ -2647,15 +2735,15 @@ async def admin_logs(level: str = "", q: str = "", limit: int = 60, x_init_data:
             where.append("(LOWER(event) LIKE ? OR LOWER(details) LIKE ?)")
             params.extend([f"%{raw_q.lower()}%", f"%{raw_q.lower()}%"])
     w_sql = " AND ".join(where)
-    rows = run(f"SELECT * FROM bot_logs WHERE {w_sql} ORDER BY ts DESC, id DESC LIMIT ?", tuple([*params, lim]))
+    rows = await arun(f"SELECT * FROM bot_logs WHERE {w_sql} ORDER BY ts DESC, id DESC LIMIT ?", tuple([*params, lim]))
     return {"logs": rows, "retention_days": LOG_RETENTION_DAYS}
 
 
 @app.post("/api/admin/logs/prune")
-async def admin_prune_logs_now(x_init_data: str = Header(default="")):
-    admin = require_admin(x_init_data)
-    prune_old_logs()
-    db_log("INFO", "admin_manual_prune", f"admin={admin['id']}", uid=admin["id"])
+async def admin_prune_logs_now(init_data: str = "", x_init_data: str = Header(default="")):
+    admin = require_admin(x_init_data or init_data)
+    await asyncio.to_thread(prune_old_logs)
+    await asyncio.to_thread(db_log, "INFO", "admin_manual_prune", f"admin={admin['id']}", admin["id"])
     return {"ok": True}
 
 
@@ -2665,7 +2753,7 @@ STATIC_DIR.mkdir(parents=True, exist_ok=True)
 
 @app.get("/health")
 async def health():
-    run("SELECT 1")
+    await arun("SELECT 1")
     free_targets = _free_fallback_targets()
     return {
         "ok": True,
