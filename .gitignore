@@ -1,32 +1,30 @@
-# Python / кэш / виртуальные окружения
+# Окружение и секреты
+.env
+.env.*
+*.pem
+*.key
+
+# Python и сборка
 __pycache__/
 *.py[cod]
 *$py.class
 *.egg-info/
-.eggs/
+.pytest_cache/
+.ruff_cache/
 build/
 dist/
-.venv/
 venv/
-env/
+.venv/
 
-# Локальные переменные окружения и секреты
-.env
-.env.*
-!.env.example
-
-# Локальные снапшоты бэкапов и временные файлы проекта
-snapeat_backups/
-*.zip
-*.log
+# Локальные БД, логи и бэкапы
+*.db
 *.sqlite
 *.sqlite3
-*.db
+*.log
+/tmp/snapeat_backups/
 
-# Редакторы, ОС и системные файлы
+# Системные и редакторские файлы
 .DS_Store
 Thumbs.db
-.idea/
 .vscode/
-*.swp
-*.swo
+.idea/
