@@ -132,6 +132,17 @@ FREE_FALLBACK_8_MODELS = [
     if m.strip()
 ]
 
+PROXYAPI_API_KEY = (os.getenv("PROXYAPI_API_KEY") or "").strip()
+PROXYAPI_BASE_URL = (os.getenv("PROXYAPI_BASE_URL") or "https://api.proxyapi.ru/v1/chat/completions").strip()
+PROXYAPI_MODELS = [
+    m.strip()
+    for m in (
+        os.getenv("PROXYAPI_MODELS")
+        or os.getenv("PROXYAPI_MODEL")
+        or "anthropic/claude-haiku-5-5"
+    ).split(",")
+    if m.strip()
+]
 OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
 OPENAI_MODEL = (os.getenv("OPENAI_MODEL") or "gpt-4o-mini").strip()
 AI_CONCURRENCY = max(1, int(os.getenv("AI_CONCURRENCY", "4")))
@@ -748,6 +759,7 @@ _ALL_SECRETS = tuple(
         FREE_FALLBACK_6_API_KEY,
         FREE_FALLBACK_7_API_KEY,
         FREE_FALLBACK_8_API_KEY,
+        PROXYAPI_API_KEY,
         OPENAI_API_KEY,
         YOOKASSA_SECRET_KEY,
     ) if s
@@ -984,6 +996,12 @@ async def _call_openai_compatible(
         clean_url = "https://" + clean_url.lstrip("/")
     if not clean_url:
         raise RuntimeError(f"{provider_name}: некорректный URL")
+    clean_url = clean_url.rstrip("/")
+    if not clean_url.endswith("/chat/completions"):
+        if clean_url.endswith("/v1") or clean_url.endswith("/openai/v1"):
+            clean_url = clean_url + "/chat/completions"
+        elif "/api/v1" in clean_url and not clean_url.endswith("/chat/completions"):
+            clean_url = clean_url + "/chat/completions"
 
     has_image = any("inline_data" in p for p in parts)
     content = []
@@ -1070,6 +1088,9 @@ def _free_fallback_targets() -> list[tuple[str, str, str, str]]:
     if GROQ_API_KEY and GROQ_BASE_URL and GROQ_MODELS:
         for m in GROQ_MODELS:
             targets.append(("Groq", GROQ_API_KEY, GROQ_BASE_URL, m))
+    if PROXYAPI_API_KEY and PROXYAPI_BASE_URL and PROXYAPI_MODELS:
+        for m in PROXYAPI_MODELS:
+            targets.append(("ProxyAPI", PROXYAPI_API_KEY, PROXYAPI_BASE_URL, m))
     return targets
 
 
