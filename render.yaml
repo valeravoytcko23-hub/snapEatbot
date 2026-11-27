@@ -14,6 +14,10 @@ services:
         sync: false
       - key: ADMIN_IDS
         sync: false
+      - key: AI_RELAY_URL
+        sync: false
+      - key: RELAY_SECRET
+        sync: false
       - key: GEMINI_API_KEY
         sync: false
       - key: GROQ_API_KEY

@@ -137,18 +137,18 @@ PROXYAPI_MODELS = [
 OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
 OPENAI_MODEL = (os.getenv("OPENAI_MODEL") or "gpt-4o-mini").strip()
 
-AI_RELAY_URL = (os.getenv("AI_RELAY_URL") or "").strip()
-RELAY_SECRET = (os.getenv("RELAY_SECRET") or "").strip()
+AI_RELAY_URL = (os.getenv("AI_RELAY_URL") or "").strip().strip('"').strip("'")
+RELAY_SECRET = (os.getenv("RELAY_SECRET") or "").strip().strip('"').strip("'")
 AI_RELAY_MODELS = [
     m.strip()
     for m in (
         os.getenv("AI_RELAY_MODELS")
         or os.getenv("AI_RELAY_MODEL")
-        or "gpt-4o-mini"
+        or ""
     ).split(",")
     if m.strip()
 ]
-AI_RELAY_HEADER = (os.getenv("AI_RELAY_HEADER") or "").strip()
+AI_RELAY_HEADER = (os.getenv("AI_RELAY_HEADER") or "X-Relay-Secret").strip()
 
 AI_CONCURRENCY = max(1, int(os.getenv("AI_CONCURRENCY", "4")))
 AI_CACHE_TTL = max(60, int(os.getenv("AI_CACHE_TTL", "86400")))
@@ -874,9 +874,9 @@ def suggest(rem, mode="", seed=0):
 PROMPT_FOOD = (
     "Ты опытный нутрициолог. Определи блюда/продукты (или прочитай таблицу пищевой ценности на этикетке/упаковке, если на фото этикетка). "
     "Оцени вес порции и КБЖУ. Отвечай ТОЛЬКО валидным JSON без markdown: "
-    '{"items":[{"name":"название","grams":число,"kcal":число,"p":число,"f":число,"c":число}]}. '
+    '{"items":[{"name":"название","grams":число,"kcal":число,"p":число,"f":число,"c":число}]}'. '
     "Значения — на всю съеденную порцию (или указанную в комментарии порцию), p/f/c в граммах. "
-    'Если еды или данных нет — {"items":[]}. Названия по-русски.'
+    'Если еды или данных нет — {"items":[]}'. Названия по-русски.'
 )
 
 PROMPT_MEALPLAN = (
@@ -884,7 +884,7 @@ PROMPT_MEALPLAN = (
     "Составь вкусный, реалистичный и сбалансированный план питания из простых понятных продуктов с точными граммовками "
     "строго под целевые КБЖУ и пожелания пользователя (количество сладкого, продукты в холодильнике, исключения). "
     "Отвечай ТОЛЬКО валидным JSON без markdown: "
-    '{"meals":[{"meal":"breakfast|lunch|dinner|snack","title":"Приём пищи","items":[{"name":"продукт/блюдо","grams":число,"kcal":число,"p":число,"f":число,"c":число}]}],"tip":"короткий совет на 1 предложение"}. '
+    '{"meals":[{"meal":"breakfast|lunch|dinner|snack","title":"Приём пищи","items":[{"name":"продукт/блюдо","grams":число,"kcal":число,"p":число,"f":число,"c":число}]}],"tip":"короткий совет на 1 предложение"}'. '
     "Названия по-русски."
 )
 
@@ -1064,6 +1064,99 @@ def _normalize_chat_completions_url(url: str) -> str:
     return clean_url
 
 
+def _normalize_relay_ask_url(url: str) -> str:
+    clean_url = (url or "").strip().strip('"').strip("'")
+    if not clean_url:
+        return ""
+    if not clean_url.startswith(("http://", "https://")):
+        clean_url = "https://" + clean_url.lstrip("/")
+    clean_url = clean_url.rstrip("/")
+    if clean_url.endswith("/v1/ask"):
+        return clean_url
+    if clean_url.endswith("/v1"):
+        return clean_url + "/ask"
+    return clean_url + "/v1/ask"
+
+
+async def _call_relay_ask(
+    system_prompt: str,
+    parts: list,
+    model: str | None = None,
+    temp: float = 0.2,
+    json_mode: bool = True,
+    timeout_sec: float = 70.0,
+) -> str:
+    endpoint = _normalize_relay_ask_url(AI_RELAY_URL)
+    if not endpoint:
+        raise RuntimeError("AI Relay: не задан AI_RELAY_URL")
+
+    text_chunks: list[str] = []
+    img_b64 = ""
+    img_mime = "image/jpeg"
+    for p in parts:
+        if "text" in p and p["text"]:
+            text_chunks.append(str(p["text"]))
+        elif "inline_data" in p and not img_b64:
+            img_mime = str((p["inline_data"] or {}).get("mime_type") or "image/jpeg")
+            img_b64 = str((p["inline_data"] or {}).get("data") or "")
+
+    prompt_txt = "\n".join(text_chunks).strip() or ("Что на фото? Оцени порцию и КБЖУ." if img_b64 else "")
+    if not prompt_txt:
+        raise RuntimeError("AI Relay: пустой prompt")
+
+    payload: dict = {
+        "prompt": prompt_txt,
+        "system_prompt": system_prompt,
+        "temperature": temp,
+        "json_mode": json_mode,
+    }
+    if model:
+        payload["model"] = model
+    if img_b64:
+        payload["image_base64"] = img_b64
+        payload["image_mime"] = img_mime
+
+    headers = {"Content-Type": "application/json"}
+    if RELAY_SECRET:
+        hdr_name = AI_RELAY_HEADER or "X-Relay-Secret"
+        headers[hdr_name] = RELAY_SECRET
+        if hdr_name.lower() != "authorization":
+            headers["Authorization"] = f"Bearer {RELAY_SECRET}"
+
+    used_model = model or (AI_RELAY_MODELS[0] if AI_RELAY_MODELS else "default")
+    async with httpx.AsyncClient(timeout=timeout_sec) as cl:
+        for attempt in range(2):
+            try:
+                r = await cl.post(endpoint, headers=headers, json=payload)
+            except Exception as e:
+                if attempt == 1:
+                    raise RuntimeError(f"AI Relay сеть: {type(e).__name__}")
+                await asyncio.sleep(0.8)
+                continue
+            if r.status_code in (502, 503, 504) and attempt == 0:
+                await asyncio.sleep(1.0)
+                continue
+            if r.status_code >= 400:
+                err_snippet = _err(r.text[:240])
+                await adb_log(
+                    "WARNING",
+                    "ai_relay_http_err",
+                    f"AI Relay {r.status_code} ({'vision' if img_b64 else 'text'}): {err_snippet}",
+                )
+                raise RuntimeError(f"AI Relay {r.status_code}: {err_snippet}")
+
+            data = r.json()
+            answer = (data.get("answer") or "").strip()
+            if not answer:
+                raise RuntimeError("AI Relay вернул пустой ответ")
+            _extract_json_obj(answer)
+            resp_model = str(data.get("model") or used_model)
+            _record_ai_success("AI Relay", resp_model, "vision" if img_b64 else "text")
+            return answer
+
+    raise RuntimeError("AI Relay: исчерпаны попытки")
+
+
 async def _call_openai_compatible(
     url: str,
     api_key: str,
@@ -1077,8 +1170,7 @@ async def _call_openai_compatible(
     clean_url = _normalize_chat_completions_url(url)
     if not clean_url:
         raise RuntimeError(f"{provider_name}: некорректный URL")
-    is_relay = bool(AI_RELAY_URL) and clean_url == _normalize_chat_completions_url(AI_RELAY_URL)
-    if not api_key and not is_relay:
+    if not api_key:
         raise RuntimeError(f"{provider_name}: ключ не задан")
 
     has_image = any("inline_data" in p for p in parts)
@@ -1102,12 +1194,10 @@ async def _call_openai_compatible(
     if use_json_format and not has_image:
         payload["response_format"] = {"type": "json_object"}
 
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        if is_relay and AI_RELAY_HEADER:
-            headers[AI_RELAY_HEADER] = api_key
-        else:
-            headers["Authorization"] = f"Bearer {api_key}"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
     if "openrouter.ai" in clean_url:
         headers["HTTP-Referer"] = BASE_URL or "https://snapeat.app"
         headers["X-Title"] = "SnapEat"
@@ -1154,7 +1244,7 @@ async def _call_openai_compatible(
 def _relay_targets() -> list[tuple[str, str, str, str]]:
     if not AI_RELAY_URL:
         return []
-    models = AI_RELAY_MODELS or ["gpt-4o-mini"]
+    models = AI_RELAY_MODELS or [""]
     return [("AI Relay", RELAY_SECRET, AI_RELAY_URL, m) for m in models]
 
 
@@ -1166,7 +1256,6 @@ def _proxyapi_targets() -> list[tuple[str, str, str, str]]:
 
 def _free_fallback_targets() -> list[tuple[str, str, str, str]]:
     targets: list[tuple[str, str, str, str]] = []
-    targets.extend(_relay_targets())
     if PROXYAPI_PRIORITY:
         targets.extend(_proxyapi_targets())
     for label, key, url, models in FREE_SLOTS:
@@ -1178,6 +1267,27 @@ def _free_fallback_targets() -> list[tuple[str, str, str, str]]:
     if not PROXYAPI_PRIORITY:
         targets.extend(_proxyapi_targets())
     return targets
+
+
+async def _call_relay_chain(system_prompt: str, parts: list, temp: float = 0.2, timeout_sec: float = 70.0) -> str:
+    relay_list = _relay_targets()
+    if not relay_list:
+        raise RuntimeError("AI_RELAY_URL не задан")
+    errs = []
+    for _lbl, _k, _u, mod in relay_list:
+        try:
+            return await _call_relay_ask(
+                system_prompt,
+                parts,
+                model=(mod or None),
+                temp=temp,
+                json_mode=True,
+                timeout_sec=timeout_sec,
+            )
+        except Exception as e:
+            errs.append(f"AI Relay/{mod or 'default'}: {_err(e)}")
+            log.warning("Relay target failed (%s): %s", mod or "default", _err(e))
+    raise RuntimeError(" | ".join(errs))
 
 
 async def _call_free_fallback(system_prompt: str, parts: list, temp: float = 0.2) -> str:
@@ -1196,7 +1306,7 @@ async def _call_free_fallback(system_prompt: str, parts: list, temp: float = 0.2
                 system_prompt,
                 parts,
                 temp=temp,
-                use_json_format=("openrouter.ai" not in url and label != "AI Relay"),
+                use_json_format=("openrouter.ai" not in url),
             )
         except Exception as e:
             errs.append(f"{label}/{model}: {_err(e)}")
@@ -1223,7 +1333,7 @@ async def _call_gemini_raw(
     proxy_targets = _proxyapi_targets() if PROXYAPI_PRIORITY else []
     has_relay = bool(_relay_targets())
     has_free = bool(_free_fallback_targets())
-    has_any_fallback = has_free or bool(OPENAI_API_KEY) or bool(proxy_targets) or has_relay
+    has_any_fallback = has_relay or has_free or bool(OPENAI_API_KEY) or bool(proxy_targets)
     if not AI_KEY and not has_any_fallback:
         raise HTTPException(
             503,
@@ -1232,6 +1342,16 @@ async def _call_gemini_raw(
 
     primary_err = None
     last_err = "ИИ временно перегружен, попробуйте через минуту"
+
+    if has_relay:
+        try:
+            return await _call_relay_chain(system_prompt, parts, temp=temp, timeout_sec=max(timeout_sec, 70.0))
+        except Exception as re_err:
+            err_txt = f"AI Relay: {_err(re_err)}"
+            if not primary_err:
+                primary_err = err_txt
+            last_err = err_txt
+            log.warning("AI Relay failed: %s", _err(re_err))
 
     for _lbl, p_key, p_url, p_mod in proxy_targets:
         try:
@@ -3848,6 +3968,8 @@ async def admin_ai_health(init_data: str = "", x_init_data: str = Header(default
     if AI_KEY:
         for mod in _model_candidates():
             providers.append({"name": "Gemini", "model": mod, "configured": True})
+    for label, _k, _u, mod in _relay_targets():
+        providers.append({"name": label, "model": mod or "default", "configured": True})
     for label, _k, _u, mod in _free_fallback_targets():
         providers.append({"name": label, "model": mod, "configured": True})
     if OPENAI_API_KEY:
@@ -4010,6 +4132,7 @@ async def health():
         "webhook": bool(BASE_URL),
         "gemini": bool(AI_KEY),
         "ai_relay": bool(AI_RELAY_URL),
+        "ai_relay_url": _normalize_relay_ask_url(AI_RELAY_URL) if AI_RELAY_URL else "",
         "ai_relay_models": AI_RELAY_MODELS if AI_RELAY_URL else [],
         "proxyapi": bool(PROXYAPI_API_KEY),
         "proxyapi_priority": PROXYAPI_PRIORITY,
