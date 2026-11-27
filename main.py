@@ -850,21 +850,112 @@ def split_image(image: str):
     return mime, cleaned_b64
 
 
-def _extract_json_obj(raw: str) -> dict:
-    cleaned = re.sub(r"```(?:json)?", "", raw or "", flags=re.I).replace("```", "").strip()
+def _num_from_val(val, default: float = 0.0) -> float:
+    if val is None or isinstance(val, bool):
+        return default
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = str(val).strip().replace(",", ".")
+    s = re.sub(r"[^0-9.\-+]", "", s)
+    if not s or s in (".", "-", "+"):
+        return default
     try:
-        parsed = json.loads(cleaned)
-        if isinstance(parsed, dict):
-            return parsed
+        return float(s)
     except Exception:
-        pass
-    m = re.search(r"\{.*\}", cleaned, re.S)
-    if not m:
-        raise ValueError("JSON object not found")
-    parsed = json.loads(m.group(0))
-    if not isinstance(parsed, dict):
-        raise ValueError("JSON root is not an object")
-    return parsed
+        return default
+
+
+def _repair_json_text(text: str) -> str:
+    s = (text or "").strip()
+    s = re.sub(r"```(?:json)?", "", s, flags=re.I).replace("```", "").strip()
+    s = s.replace("\u201c", '"').replace("\u201d", '"').replace("\u2019", "'")
+    # Remove trailing commas before } or ]
+    s = re.sub(r",\s*([}\]])", r"\1", s)
+    return s
+
+
+def _extract_json_obj(raw: str) -> dict:
+    cleaned = _repair_json_text(raw)
+    if not cleaned:
+        raise ValueError("Empty response")
+
+    candidates = [cleaned]
+    start_idx = cleaned.find("{")
+    end_idx = cleaned.rfind("}")
+    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+        candidates.append(_repair_json_text(cleaned[start_idx : end_idx + 1]))
+
+    for cand in candidates:
+        try:
+            parsed = json.loads(cand)
+            if isinstance(parsed, dict):
+                return parsed
+            if isinstance(parsed, list):
+                return {"items": parsed}
+        except Exception:
+            # Try closing truncated JSON brackets/braces if model cut off output
+            open_braces = cand.count("{") - cand.count("}")
+            open_brackets = cand.count("[") - cand.count("]")
+            if open_braces >= 0 and open_brackets >= 0:
+                repaired = _repair_json_text(cand + ("]" * open_brackets) + ("}" * open_braces))
+                try:
+                    parsed = json.loads(repaired)
+                    if isinstance(parsed, dict):
+                        return parsed
+                    if isinstance(parsed, list):
+                        return {"items": parsed}
+                except Exception:
+                    pass
+
+    # Fallback: extract JSON-like item objects inside text if wrapper broke
+    obj_matches = re.findall(r"\{[^{}]*\}", cleaned)
+    collected = []
+    for m_txt in obj_matches:
+        try:
+            d = json.loads(_repair_json_text(m_txt))
+            if isinstance(d, dict) and ("name" in d or "title" in d or "kcal" in d):
+                collected.append(d)
+        except Exception:
+            continue
+    if collected:
+        return {"items": collected}
+
+    raise ValueError("JSON object not found")
+
+
+def _normalize_ai_item(raw_item: dict, fallback_name: str = "") -> dict | None:
+    if not isinstance(raw_item, dict):
+        return None
+    name = str(
+        raw_item.get("name")
+        or raw_item.get("title")
+        or raw_item.get("dish")
+        or raw_item.get("food")
+        or fallback_name
+        or ""
+    ).strip()
+    name = re.sub(r"\s+", " ", name)[:120]
+    if not name:
+        return None
+
+    grams = _num_from_val(raw_item.get("grams") if "grams" in raw_item else raw_item.get("weight_g"), 100.0)
+    if grams <= 0:
+        grams = 100.0
+    grams = min(5000.0, max(1.0, grams))
+
+    p = _num_from_val(raw_item.get("p") if "p" in raw_item else raw_item.get("protein"), 0.0)
+    f = _num_from_val(raw_item.get("f") if "f" in raw_item else raw_item.get("fat"), 0.0)
+    c = _num_from_val(raw_item.get("c") if "c" in raw_item else raw_item.get("carbs"), 0.0)
+    kcal = _num_from_val(raw_item.get("kcal") if "kcal" in raw_item else raw_item.get("calories"), 0.0)
+
+    p = min(500.0, max(0.0, p))
+    f = min(500.0, max(0.0, f))
+    c = min(1000.0, max(0.0, c))
+    if kcal <= 0 and (p > 0 or f > 0 or c > 0):
+        kcal = p * 4.0 + f * 9.0 + c * 4.0
+    kcal = min(5000.0, max(0.0, kcal))
+
+    return Item(name=name, grams=grams, kcal=kcal, p=p, f=f, c=c).model_dump()
 
 
 def _model_candidates() -> list[str]:
@@ -949,7 +1040,11 @@ async def _call_openai_compatible(
             else:
                 txt = (raw_content or "").strip()
             if not txt:
-                raise RuntimeError(f"{provider_name} вернул пустой ответ")
+                reasoning_txt = (msg_obj.get("reasoning_content") or msg_obj.get("reasoning") or "").strip()
+                if reasoning_txt:
+                    txt = reasoning_txt
+                else:
+                    raise RuntimeError(f"{provider_name} вернул пустой ответ")
             _extract_json_obj(txt)
             _record_ai_success(provider_name, model, "vision" if has_image else "text")
             return txt
@@ -1187,10 +1282,13 @@ _LOCAL_FOOD_DB = [
     {"keys": ["творог 9%", "творог жирный", "творог 18%"], "name": "Творог 9%", "kcal_100": 159, "p_100": 16.7, "f_100": 9.0, "c_100": 2.0, "default_g": 150},
     {"keys": ["творог"], "name": "Творог 5%", "kcal_100": 121, "p_100": 17.0, "f_100": 5.0, "c_100": 1.8, "default_g": 150},
     {"keys": ["куриная грудка", "филе курицы", "курица грудка"], "name": "Куриная грудка", "kcal_100": 165, "p_100": 31.0, "f_100": 3.6, "c_100": 0.0, "default_g": 150},
+    {"keys": ["курица", "куриное филе", "куриное бедро", "бедро курицы"], "name": "Курица", "kcal_100": 175, "p_100": 24.0, "f_100": 8.5, "c_100": 0.0, "default_g": 150},
+    {"keys": ["картошка", "картофель", "тушеная картошка", "тушёная картошка", "пюре"], "name": "Картофель тушёный", "kcal_100": 95, "p_100": 2.0, "f_100": 2.5, "c_100": 16.0, "default_g": 200},
     {"keys": ["индейка", "филе индейки"], "name": "Филе индейки", "kcal_100": 135, "p_100": 27.0, "f_100": 2.5, "c_100": 0.0, "default_g": 150},
     {"keys": ["яйцо", "яйца", "яйцо варёное", "яйца варёные", "яичница", "омлет"], "name": "Яйца", "kcal_100": 155, "p_100": 13.0, "f_100": 11.0, "c_100": 1.1, "default_g": 110},
     {"keys": ["гречка", "гречневая каша"], "name": "Гречка варёная", "kcal_100": 110, "p_100": 4.0, "f_100": 1.0, "c_100": 21.0, "default_g": 200},
-    {"keys": ["рис", "рисовая каша"], "name": "Рис варёный", "kcal_100": 130, "p_100": 2.7, "f_100": 0.3, "c_100": 28.0, "default_g": 200},
+    {"keys": ["рис", "рисовая каша", "плов"], "name": "Рис варёный", "kcal_100": 130, "p_100": 2.7, "f_100": 0.3, "c_100": 28.0, "default_g": 200},
+    {"keys": ["макароны", "спагетти", "паста"], "name": "Макароны варёные", "kcal_100": 135, "p_100": 4.5, "f_100": 1.0, "c_100": 27.0, "default_g": 200},
     {"keys": ["овсянка", "овсяная каша", "геркулес"], "name": "Овсянка", "kcal_100": 88, "p_100": 3.0, "f_100": 1.7, "c_100": 15.0, "default_g": 220},
     {"keys": ["греческий йогурт", "йогурт"], "name": "Греческий йогурт", "kcal_100": 66, "p_100": 10.0, "f_100": 2.0, "c_100": 4.0, "default_g": 200},
     {"keys": ["кефир"], "name": "Кефир 1%", "kcal_100": 40, "p_100": 3.0, "f_100": 1.0, "c_100": 4.0, "default_g": 250},
@@ -1198,11 +1296,12 @@ _LOCAL_FOOD_DB = [
     {"keys": ["яблоко", "яблоки"], "name": "Яблоко", "kcal_100": 52, "p_100": 0.3, "f_100": 0.2, "c_100": 14.0, "default_g": 180},
     {"keys": ["лосось", "сёмга", "семга"], "name": "Лосось", "kcal_100": 208, "p_100": 20.0, "f_100": 13.0, "c_100": 0.0, "default_g": 120},
     {"keys": ["тунец"], "name": "Тунец", "kcal_100": 116, "p_100": 26.0, "f_100": 1.0, "c_100": 0.0, "default_g": 100},
-    {"keys": ["говядина"], "name": "Говядина", "kcal_100": 190, "p_100": 27.0, "f_100": 9.0, "c_100": 0.0, "default_g": 120},
+    {"keys": ["говядина", "котлеты", "котлета"], "name": "Говядина", "kcal_100": 190, "p_100": 27.0, "f_100": 9.0, "c_100": 0.0, "default_g": 120},
     {"keys": ["хлеб", "цельнозерновой хлеб", "тост"], "name": "Хлеб цельнозерновой", "kcal_100": 247, "p_100": 13.0, "f_100": 4.0, "c_100": 41.0, "default_g": 60},
     {"keys": ["сыр"], "name": "Сыр", "kcal_100": 350, "p_100": 25.0, "f_100": 27.0, "c_100": 0.0, "default_g": 40},
     {"keys": ["миндаль", "орехи"], "name": "Миндаль", "kcal_100": 579, "p_100": 21.0, "f_100": 50.0, "c_100": 22.0, "default_g": 30},
     {"keys": ["авокадо"], "name": "Авокадо", "kcal_100": 160, "p_100": 2.0, "f_100": 15.0, "c_100": 9.0, "default_g": 100},
+    {"keys": ["борщ", "суп"], "name": "Суп / борщ", "kcal_100": 62, "p_100": 2.8, "f_100": 2.5, "c_100": 7.0, "default_g": 250},
 ]
 
 
@@ -1215,28 +1314,59 @@ def _local_food_fallback(text: str) -> list[dict]:
     pcs_match = re.search(r"\b(\d+)\s*(?:шт|штук|штуки|яйца|яйцо|банана|банан|яблока|яблоко)\b", q)
     pcs_count = int(pcs_match.group(1)) if pcs_match else None
 
+    matched = []
+    used_names = set()
     for entry in _LOCAL_FOOD_DB:
         for kw in sorted(entry["keys"], key=len, reverse=True):
             if re.search(r"(?<![а-яёa-z0-9_])" + re.escape(kw) + r"(?![а-яёa-z0-9_])", q):
-                if grams_override and 5 <= grams_override <= 5000:
-                    g = grams_override
-                elif pcs_count and pcs_count > 0:
-                    unit_g = 55.0 if "яйц" in kw else (120.0 if "банан" in kw else (180.0 if "яблок" in kw else entry["default_g"]))
-                    g = min(5000.0, unit_g * pcs_count)
-                else:
-                    g = float(entry["default_g"])
-                ratio = g / 100.0
-                return [
-                    Item(
-                        name=entry["name"],
-                        grams=g,
-                        kcal=entry["kcal_100"] * ratio,
-                        p=entry["p_100"] * ratio,
-                        f=entry["f_100"] * ratio,
-                        c=entry["c_100"] * ratio,
-                    ).model_dump()
-                ]
-    return []
+                if entry["name"] in used_names:
+                    break
+                used_names.add(entry["name"])
+                matched.append((entry, kw))
+                break
+
+    if not matched:
+        return []
+
+    if len(matched) == 1:
+        entry, kw = matched[0]
+        if grams_override and 5 <= grams_override <= 5000:
+            g = grams_override
+        elif pcs_count and pcs_count > 0:
+            unit_g = 55.0 if "яйц" in kw else (120.0 if "банан" in kw else (180.0 if "яблок" in kw else entry["default_g"]))
+            g = min(5000.0, unit_g * pcs_count)
+        else:
+            g = float(entry["default_g"])
+        ratio = g / 100.0
+        return [
+            Item(
+                name=entry["name"],
+                grams=g,
+                kcal=entry["kcal_100"] * ratio,
+                p=entry["p_100"] * ratio,
+                f=entry["f_100"] * ratio,
+                c=entry["c_100"] * ratio,
+            ).model_dump()
+        ]
+
+    # Split total weight across detected ingredients for compound dishes like "тушенная картошка с курицей 300 г"
+    total_g = grams_override if (grams_override and 10 <= grams_override <= 5000) else sum(float(e["default_g"]) for e, _ in matched[:3])
+    top_pairs = matched[:3]
+    per_g = round(total_g / len(top_pairs), 1)
+    out_items = []
+    for entry, _kw in top_pairs:
+        ratio = per_g / 100.0
+        out_items.append(
+            Item(
+                name=entry["name"],
+                grams=per_g,
+                kcal=entry["kcal_100"] * ratio,
+                p=entry["p_100"] * ratio,
+                f=entry["f_100"] * ratio,
+                c=entry["c_100"] * ratio,
+            ).model_dump()
+        )
+    return out_items
 
 
 async def ask_ai(text: str, image: str, label_mode: bool = False):
@@ -1302,8 +1432,15 @@ async def ask_ai(text: str, image: str, label_mode: bool = False):
                 raise
         try:
             obj = _extract_json_obj(raw)
-            items = obj.get("items") or []
-            parsed = [Item(**i).model_dump() for i in items if isinstance(i, dict)][:15]
+            raw_items = obj.get("items")
+            if not isinstance(raw_items, list):
+                raw_items = obj.get("food") or obj.get("dishes") or obj.get("products") or []
+            parsed = []
+            if isinstance(raw_items, list):
+                for idx_i, raw_i in enumerate(raw_items[:15]):
+                    norm_i = _normalize_ai_item(raw_i, fallback_name=text.strip()[:80] if len(raw_items) == 1 else f"Блюдо {idx_i + 1}")
+                    if norm_i:
+                        parsed.append(norm_i)
             if not parsed and not prepared_img:
                 parsed = _local_food_fallback(text)
             _cache_set(cache_key, parsed)
