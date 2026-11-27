@@ -18,6 +18,12 @@ services:
         sync: false
       - key: RELAY_SECRET
         sync: false
+      - key: PROXYAPI_API_KEY
+        sync: false
+      - key: PROXYAPI_MODELS
+        value: anthropic/claude-haiku-4-5
+      - key: PROXYAPI_PRIORITY
+        value: "1"
       - key: GEMINI_API_KEY
         sync: false
       - key: GROQ_API_KEY
