@@ -936,7 +936,9 @@ async def _call_openai_compatible(
                 await asyncio.sleep(0.8)
                 continue
             if r.status_code >= 400:
-                raise RuntimeError(f"{provider_name} {r.status_code}: {_err(r.text[:140])}")
+                err_snippet = _err(r.text[:240])
+                await adb_log("WARNING", "ai_oai_http_err", f"{provider_name} {r.status_code} ({'vision' if has_image else 'text'}): {err_snippet}")
+                raise RuntimeError(f"{provider_name} {r.status_code}: {err_snippet}")
             data = r.json()
             msg_obj = ((data.get("choices") or [{}])[0].get("message") or {})
             raw_content = msg_obj.get("content")
@@ -1281,13 +1283,23 @@ async def ask_ai(text: str, image: str, label_mode: bool = False):
         }
         try:
             raw = await _call_gemini_raw(PROMPT_FOOD, parts, schema, temp=0.2)
-        except HTTPException:
-            local_items = _local_food_fallback(text) if not prepared_img else []
-            if local_items:
-                log.info("Using local nutrition fallback for query: %s", _err(text[:100]))
-                _cache_set(cache_key, local_items)
-                return local_items
-            raise
+        except HTTPException as he:
+            if prepared_img and (_free_fallback_targets() or OPENAI_API_KEY):
+                try:
+                    if _free_fallback_targets():
+                        raw = await _call_free_fallback(PROMPT_FOOD, parts, temp=0.2)
+                    elif OPENAI_API_KEY:
+                        raw = await _call_openai_fallback(PROMPT_FOOD, parts, temp=0.2)
+                except Exception as ve:
+                    await adb_log("ERROR", "ai_vision_fallback_err", _err(ve))
+                    raise he
+            else:
+                local_items = _local_food_fallback(text) if not prepared_img else []
+                if local_items:
+                    log.info("Using local nutrition fallback for query: %s", _err(text[:100]))
+                    _cache_set(cache_key, local_items)
+                    return local_items
+                raise
         try:
             obj = _extract_json_obj(raw)
             items = obj.get("items") or []
@@ -3542,7 +3554,10 @@ async def admin_ai_test(init_data: str = "", x_init_data: str = Header(default="
     vision_ok = True
     vision_err = ""
     try:
-        await ask_ai("Тест картинки", tiny_png, label_mode=False)
+        v_items = await ask_ai("Распознай еду или продукты на фото", tiny_png, label_mode=False)
+        if not isinstance(v_items, list):
+            vision_ok = False
+            vision_err = "Некорректный ответ Vision"
     except Exception as ve:
         vision_ok = False
         vision_err = _err(ve)
