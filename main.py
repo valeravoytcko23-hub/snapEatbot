@@ -1159,7 +1159,6 @@ async def _call_gemini_raw(system_prompt: str, parts: list, schema: dict, temp: 
 
     primary_err = None
     last_err = "ИИ временно перегружен, попробуйте через минуту"
-    _has_img = any("inline_data" in p for p in parts)
 
     if proxy_targets:
         for _lbl, p_key, p_url, p_mod in proxy_targets:
@@ -1922,6 +1921,16 @@ async def transcribe_voice_audio(audio_bytes: bytes, mime_type: str = "audio/ogg
 
 _pending_chat_food: dict[str, dict] = {}
 
+def _prune_pending_chat_food(now_ts: float | None = None):
+    now_v = time.time() if now_ts is None else now_ts
+    expired = [k for k, v in _pending_chat_food.items() if now_v > v.get("exp", 0)]
+    for k in expired:
+        _pending_chat_food.pop(k, None)
+    if len(_pending_chat_food) > 2000:
+        oldest = sorted(_pending_chat_food.items(), key=lambda kv: kv[1].get("exp", 0))[:500]
+        for k, _ in oldest:
+            _pending_chat_food.pop(k, None)
+
 
 async def _check_user_in_channel(uid: int) -> bool:
     if not CHANNEL_ID:
@@ -2215,6 +2224,7 @@ async def _handle_chat_food_query(m: Message, text_query: str = "", image_data_u
     local_dt = datetime.now(timezone.utc) + timedelta(minutes=int(u.get("tz_offset") or 180))
     day_str = local_dt.date().isoformat()
     meal_key = _guess_meal_by_hour(local_dt.hour)
+    _prune_pending_chat_food()
     _pending_chat_food[token] = {"uid": uid, "day": day_str, "meal": meal_key, "items": items, "exp": time.time() + 1800}
 
     tot_k = round(sum(x["kcal"] for x in items), 1)
@@ -2237,6 +2247,7 @@ async def _handle_chat_food_query(m: Message, text_query: str = "", image_data_u
 @dp.callback_query(F.data.startswith("addfood:"))
 async def on_addfood_cb(cb: CallbackQuery):
     token = cb.data.split(":", 1)[1]
+    _prune_pending_chat_food()
     rec = _pending_chat_food.get(token)
     if not rec or rec.get("uid") != cb.from_user.id or time.time() > rec.get("exp", 0):
         await cb.answer("Предложение устарело", show_alert=True)
