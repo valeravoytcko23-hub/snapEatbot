@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SnapEat · Admin</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+:root{
+  --bg:#0b0f0e;--card:rgba(20,26,24,.92);--c2:#1b2421;--line:rgba(255,255,255,.08);
+  --tx:#eef5f2;--hint:#879992;--ac:#3ddc97;--bad:#ff6b6b;--gold:#ffb84d;--cw:#4cc3ff
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{
+  margin:0;background:radial-gradient(circle at 50% -10%, rgba(61,220,151,.08), transparent 45%), var(--bg);
+  color:var(--tx);font:14px/1.42 -apple-system,BlinkMacSystemFont,"SF Pro Display",system-ui,"Segoe UI",Roboto,sans-serif;
+  padding:12px 14px calc(94px + env(safe-area-inset-bottom,0px));
+  max-width:640px;margin-left:auto;margin-right:auto;
+}
+button,input,select,textarea{font:inherit;color:inherit}
+.row{display:flex;align-items:center;gap:8px}.sp{justify-content:space-between}.f1{flex:1;min-width:0}
+.card{
+  background:var(--card);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+  border:1px solid var(--line);border-radius:22px;padding:15px;margin-top:12px;
+  box-shadow:0 10px 28px rgba(0,0,0,.22);
+}
+h2{font-size:16px;font-weight:800;letter-spacing:-.25px;margin:0 0 8px}
+.hint{color:var(--hint);font-size:12px}
+.logo{font-weight:900;font-size:19px;letter-spacing:-.5px;display:flex;align-items:center;gap:6px}
+.logo i{color:var(--ac);font-style:normal}
+.pill{font-size:11px;font-weight:800;padding:3px 9px;border-radius:999px;background:var(--c2);border:1px solid var(--line)}
+.pill.pro{background:linear-gradient(135deg,#ffc15e,#ff7a45);color:#240e00;border:0}
+.pill.err{background:rgba(255,107,107,.16);color:var(--bad);border-color:rgba(255,107,107,.35)}
+.pill.warn{background:rgba(255,184,77,.16);color:var(--gold);border-color:rgba(255,184,77,.35)}
+.pill.ok{background:rgba(61,220,151,.14);color:var(--ac);border-color:rgba(61,220,151,.3)}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.stat{background:var(--c2);border:1px solid var(--line);border-radius:16px;padding:11px}
+.stat .v{font-size:21px;font-weight:800;letter-spacing:-.5px}
+input,select,textarea{width:100%;border:1px solid var(--line);background:var(--c2);border-radius:12px;padding:9px 11px;outline:0}
+input:focus,select:focus,textarea:focus{border-color:var(--ac)}
+.btn{border:0;border-radius:13px;background:var(--ac);color:#042416;padding:9px 12px;font-weight:750;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:5px}
+.btn:active{transform:scale(.97)}.btn:disabled{opacity:.5}
+.btn.alt{background:var(--c2);color:var(--tx);border:1px solid var(--line)}
+.btn.dn{background:rgba(255,107,107,.16);color:var(--bad);border:1px solid rgba(255,107,107,.35)}
+.btn.gold{background:linear-gradient(135deg,#ffc15e,#ff8547);color:#240e00;font-weight:800}
+.chip{border:1px solid var(--line);background:var(--c2);border-radius:999px;padding:6px 11px;font-size:12px;font-weight:650;cursor:pointer}
+.chip.on{background:var(--ac);color:#042416;font-weight:800;border-color:transparent}
+.item{padding:11px 0;border-top:1px solid var(--line)}.item:first-of-type{border-top:0}
+.wk{display:flex;gap:6px;align-items:flex-end;height:96px;margin-top:10px}
+.wk .d{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%}
+.wk i{display:block;width:100%;background:var(--ac);border-radius:6px 6px 2px 2px;min-height:3px}
+nav{
+  position:fixed;left:12px;right:12px;bottom:calc(10px + env(safe-area-inset-bottom,0px));
+  max-width:616px;margin:0 auto;display:flex;gap:4px;
+  background:rgba(22,29,27,.9);backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);
+  border:1px solid rgba(255,255,255,.1);border-radius:24px;padding:6px;z-index:5;
+  box-shadow:0 12px 32px rgba(0,0,0,.45);
+}
+nav button{
+  flex:1;border:0;background:none;padding:6px 2px;border-radius:18px;color:var(--hint);
+  cursor:pointer;font-weight:700;font-size:11px;display:flex;flex-direction:column;align-items:center;gap:2px
+}
+nav button.on{color:var(--ac);background:rgba(61,220,151,.14)}
+#M{position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(6px);display:none;align-items:flex-end;justify-content:center;z-index:8}#M.on{display:flex}
+.sheet{width:100%;max-width:640px;background:#131917;border-top:1px solid var(--line);border-radius:26px 26px 0 0;padding:16px;max-height:85vh;overflow:auto}
+#toast{
+  position:fixed;top:14px;left:50%;transform:translateX(-50%);
+  background:#eef5f2;color:#0b0f0e;padding:9px 15px;border-radius:14px;
+  font-weight:750;font-size:12.5px;display:none;z-index:20;max-width:90%;text-align:center;
+  box-shadow:0 10px 26px rgba(0,0,0,.45)
+}
+
+.alert-box{background:rgba(255,184,77,.1);border:1px solid rgba(255,184,77,.3);border-radius:16px;padding:11px;margin-top:10px}
+.alert-box.bad{background:rgba(255,107,107,.1);border-color:rgba(255,107,107,.32)}
+.alert-box.ok{background:rgba(61,220,151,.08);border-color:rgba(61,220,151,.25)}
+.prog{height:8px;border-radius:999px;background:var(--c2);overflow:hidden;margin-top:8px;border:1px solid var(--line)}
+.prog>i{display:block;height:100%;background:linear-gradient(90deg,var(--ac),#65f0b4);transition:width .25s ease}
+.qgrid{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:11px}
+</style>
+</head>
+<body>
+<div id="toast"></div>
+<div class="row sp">
+  <div class="logo">Snap<i>Eat</i> <span class="pill pro">ADMIN</span></div>
+  <div class="row" style="gap:6px">
+    <a class="chip" href="/" style="text-decoration:none">🥗 Дневник</a>
+    <button class="chip" onclick="refreshAll(true)">↻</button>
+  </div>
+</div>
+<div id="V"></div>
+<nav>
+  <button class="on" data-t="dash" onclick="go('dash')"><span>📊</span><span>Сводка</span></button>
+  <button data-t="users" onclick="go('users')"><span>👥</span><span>Юзеры</span></button>
+  <button data-t="pay" onclick="go('pay')"><span>💳</span><span>Оплаты</span></button>
+  <button data-t="req" onclick="go('req')"><span>💬</span><span>Запросы</span></button>
+  <button data-t="logs" onclick="go('logs')"><span>🪵</span><span>Логи</span></button>
+</nav>
+<div id="M" onclick="if(event.target===this)hideM()"><div class="sheet" id="MB"></div></div>
+<script>
+const tg = window.Telegram?.WebApp;
+try { tg?.ready(); tg?.expand(); } catch (_) {}
+
+function getInit() {
+  if (tg?.initData) return tg.initData;
+  const h = location.hash || "";
+  const m = h.match(/tgWebAppData=([^&]+)/);
+  if (m) { try { return decodeURIComponent(m[1]); } catch (_) { return m[1]; } }
+  return new URLSearchParams(location.search).get("init_data") || "";
+}
+
+const INIT = getInit();
+const STORAGE_KEY = "snapeat_admin_state_v6";
+const BC_HIST_KEY = "snapeat_admin_bc_history_v6";
+
+let T = "dash", STATS = null, USERS = [], PAYS = [], REQS = [], LOGS = [];
+let PAY_SUMMARY = {}, AI_HEALTH = null, BC_JOB = null;
+let U_FILTER = "all", U_Q = "", U_OFFSET = 0, L_LEVEL = "", L_Q = "", L_OFFSET = 0, R_STATUS = "open", R_OFFSET = 0, P_OFFSET = 0, P_Q = "", P_PROV = "all";
+const PAGE_LIM = 30;
+let _bcPollTimer = null;
+const _debTimers = {};
+
+function loadPersistedState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const st = JSON.parse(raw);
+    if (st && typeof st === "object") {
+      if (["dash","users","pay","req","logs"].includes(st.T)) T = st.T;
+      if (typeof st.U_FILTER === "string") U_FILTER = st.U_FILTER;
+      if (typeof st.U_Q === "string") U_Q = st.U_Q;
+      if (typeof st.L_LEVEL === "string") L_LEVEL = st.L_LEVEL;
+      if (typeof st.L_Q === "string") L_Q = st.L_Q;
+      if (["open","done","all"].includes(st.R_STATUS)) R_STATUS = st.R_STATUS;
+      if (typeof st.P_Q === "string") P_Q = st.P_Q;
+      if (typeof st.P_PROV === "string") P_PROV = st.P_PROV;
+    }
+  } catch (_) {}
+}
+
+function savePersistedState() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      T, U_FILTER, U_Q, L_LEVEL, L_Q, R_STATUS, P_Q, P_PROV
+    }));
+  } catch (_) {}
+}
+
+function getBcHistory() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(BC_HIST_KEY) || "[]");
+    return Array.isArray(arr) ? arr.slice(0, 10) : [];
+  } catch (_) { return []; }
+}
+
+function pushBcHistory(entry) {
+  try {
+    const arr = getBcHistory();
+    arr.unshift(entry);
+    localStorage.setItem(BC_HIST_KEY, JSON.stringify(arr.slice(0, 10)));
+  } catch (_) {}
+}
+
+function debounce(key, fn, ms = 220) {
+  clearTimeout(_debTimers[key]);
+  _debTimers[key] = setTimeout(fn, ms);
+}
+
+const esc = s => String(s ?? "").replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
+const num = (v, d = 0) => Number.isFinite(Number(v)) ? Number(v) : d;
+const fmtDate = ts => ts ? new Date(Number(ts) * 1000).toLocaleString("ru-RU", {day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}) : "—";
+
+function copyText(txt, label = "Скопировано") {
+  const val = String(txt ?? "");
+  if (!val) return;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(val).then(() => toast(label)).catch(() => fallbackCopy(val, label));
+  } else {
+    fallbackCopy(val, label);
+  }
+}
+
+function fallbackCopy(val, label) {
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = val;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+    toast(label);
+  } catch (_) {
+    toast("Не удалось скопировать");
+  }
+}
+
+function toast(msg, ms = 2800) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.style.display = "block";
+  clearTimeout(window.__tt);
+  window.__tt = setTimeout(() => el.style.display = "none", ms);
+}
+
+async function api(p, o = {}) {
+  const u = new URL(p, location.origin);
+  const headers = Object.assign({"Content-Type":"application/json"}, o.headers || {});
+  if (INIT) headers["X-Init-Data"] = INIT;
+  const r = await fetch(u, Object.assign({}, o, {headers}));
+  const txt = await r.text();
+  let j = {};
+  try { j = txt ? JSON.parse(txt) : {}; } catch (_) { j = {detail: txt}; }
+  if (!r.ok) throw new Error(j.detail || "HTTP " + r.status);
+  return j;
+}
+
+function showM(html) { document.getElementById("MB").innerHTML = html; document.getElementById("M").classList.add("on"); }
+function hideM() { document.getElementById("M").classList.remove("on"); }
+
+function go(t) {
+  T = t;
+  savePersistedState();
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b.dataset.t === t));
+  render();
+  loadTab(t);
+}
+
+async function loadTab(t = T, append = false) {
+  try {
+    if (t === "dash") {
+      const [st, ah, bc] = await Promise.all([
+        api("/api/admin/stats"),
+        api("/api/admin/ai-health").catch(() => null),
+        api("/api/admin/broadcast/status").catch(() => null)
+      ]);
+      STATS = st;
+      if (ah) AI_HEALTH = ah;
+      if (bc && bc.job) BC_JOB = bc.job;
+    } else if (t === "users") {
+      const r = await api(`/api/admin/users?q=${encodeURIComponent(U_Q)}&filter=${encodeURIComponent(U_FILTER)}&limit=${PAGE_LIM}&offset=${U_OFFSET}`);
+      USERS = append ? USERS.concat(r.users || []) : (r.users || []);
+    } else if (t === "pay") {
+      const r = await api(`/api/admin/payments?limit=${PAGE_LIM}&offset=${P_OFFSET}`);
+      PAYS = append ? PAYS.concat(r.payments || []) : (r.payments || []);
+      PAY_SUMMARY = r.summary_by_provider || {};
+    } else if (t === "req") {
+      const r = await api(`/api/admin/requests?status=${encodeURIComponent(R_STATUS)}&limit=${PAGE_LIM}&offset=${R_OFFSET}`);
+      REQS = append ? REQS.concat(r.requests || []) : (r.requests || []);
+    } else if (t === "logs") {
+      const r = await api(`/api/admin/logs?level=${encodeURIComponent(L_LEVEL)}&q=${encodeURIComponent(L_Q)}&limit=${PAGE_LIM}&offset=${L_OFFSET}`);
+      LOGS = append ? LOGS.concat(r.logs || []) : (r.logs || []);
+    }
+    render();
+  } catch (e) {
+    toast(e.message, 3600);
+  }
+}
+
+async function refreshAll(force = false) {
+  if (force && T === "dash") {
+    try { STATS = await api("/api/admin/stats?force=1"); } catch (_) {}
+  }
+  await loadTab(T);
+  toast("Обновлено");
+}
+
+function applyPreset(action, val) {
+  const actEl = document.getElementById("mAction");
+  const valEl = document.getElementById("mVal");
+  if (actEl) actEl.value = action;
+  if (valEl && val !== undefined) valEl.value = String(val);
+}
+
+function openUserModal(prefill = "", presetAction = null, presetVal = null) {
+  showM(`
+    <h2>Управление подпиской и запросами</h2>
+    <div class="hint" style="margin-bottom:8px">Укажите @username, ID пользователя или имя (он должен был запускать бота).</div>
+    <label class="hint">Пользователь (@username или ID)</label>
+    <input id="mTarget" value="${esc(prefill)}" placeholder="@username или 123456789" style="margin-top:4px"/>
+    <div class="qgrid">
+      <button type="button" class="chip" onclick="applyPreset('grant_pro', 7)">+7д PRO</button>
+      <button type="button" class="chip" onclick="applyPreset('grant_pro', 30)">+30д PRO</button>
+      <button type="button" class="chip" onclick="applyPreset('add_credits', 20)">+20 ИИ</button>
+      <button type="button" class="chip" onclick="applyPreset('add_mealplan', 1)">+1 Рацион</button>
+      <button type="button" class="chip" onclick="applyPreset('reset_limits', 0)">Сброс лимитов</button>
+    </div>
+    <div class="g2" style="margin-top:10px">
+      <div>
+        <label class="hint">Действие</label>
+        <select id="mAction" style="margin-top:4px">
+          <option value="grant_pro">👑 Выдать PRO (на N дней)</option>
+          <option value="add_credits">⚡ Начислить ИИ-запросы (+/-)</option>
+          <option value="set_credits">🔢 Задать баланс ИИ-запросов</option>
+          <option value="add_mealplan">🥗 Начислить билеты рациона (+/-)</option>
+          <option value="reset_limits">🔄 Сбросить дневные/месячные счётчики</option>
+          <option value="revoke_pro">⛔ Снять PRO</option>
+        </select>
+      </div>
+      <div>
+        <label class="hint">Дней PRO / Кол-во штук</label>
+        <input id="mVal" type="number" value="30" style="margin-top:4px"/>
+      </div>
+    </div>
+    <label class="row" style="margin-top:10px;gap:8px;cursor:pointer">
+      <input id="mNotify" type="checkbox" checked style="width:auto;margin:0"/>
+      <span class="hint">Уведомить пользователя в Telegram</span>
+    </label>
+    <div class="row" style="margin-top:14px">
+      <button class="btn alt" onclick="hideM()">Отмена</button>
+      <button class="btn f1" onclick="submitUserAction()">Применить</button>
+    </div>
+  `);
+  if (presetAction) applyPreset(presetAction, presetVal ?? 30);
+}
+
+async function submitUserAction() {
+  const target = (document.getElementById("mTarget")?.value || "").trim();
+  const action = document.getElementById("mAction")?.value || "grant_pro";
+  const val = parseInt(document.getElementById("mVal")?.value || "0", 10) || 0;
+  const notify = Boolean(document.getElementById("mNotify")?.checked);
+  if (!target) return toast("Укажите @username или ID");
+  if (action === "revoke_pro" && !confirm(`Точно снять PRO у пользователя ${target}?`)) return;
+  try {
+    const body = { target, action, notify };
+    if (action === "grant_pro") body.days = Math.max(1, val || 30);
+    else body.amount = val;
+    const res = await api("/api/admin/users/action", { method: "POST", body: JSON.stringify(body) });
+    hideM();
+    toast(`Готово для ${res.user?.username ? "@" + res.user.username : res.user?.id}`);
+    U_OFFSET = 0;
+    await loadTab("users");
+  } catch (e) {
+    toast(e.message, 3600);
+  }
+}
+
+async function openUserDetailModal(uid) {
+  try {
+    const d = await api(`/api/admin/users/${uid}/detail`);
+    const u = d.user || {};
+    const acts = d.admin_actions || [];
+    const pays = d.payments || [];
+    const reqs = d.requests || [];
+    const handleRef = u.username ? "@" + esc(u.username) : String(u.id);
+    showM(`
+      <div class="row sp">
+        <h2 style="margin:0">Карточка · ${esc(u.name || "Без имени")}</h2>
+        <button type="button" class="chip" onclick="copyText('${esc(String(u.id))}', 'ID скопирован')">ID ${esc(u.id)} 📋</button>
+      </div>
+      <div class="hint">${u.username ? "@" + esc(u.username) + " · " : ""}Регистрация: ${fmtDate(u.created_at)} · Цель: ${esc(u.goal || "—")} · Вес: ${u.weight ?? "—"} → ${u.target_weight ?? "—"} кг</div>
+      <div class="hint" style="margin-top:4px">Последний ИИ-запрос: ${fmtDate(d.last_ai_ts)} · Записей еды: ${num(d.entries_count)} · Рефералов: ${num(u.ref_count)}</div>
+      <div class="hint" style="margin-top:2px">Норма КБЖУ: <b>${u.kcal ? `${num(u.kcal)} ккал` : "—"}</b> ${u.kcal ? `· Б ${num(u.p)}г · Ж ${num(u.f)}г · У ${num(u.c)}г` : ""}</div>
+      <div class="qgrid">
+        <button type="button" class="chip" onclick="hideM();openUserModal('${handleRef}','grant_pro',7)">+7д PRO</button>
+        <button type="button" class="chip" onclick="hideM();openUserModal('${handleRef}','grant_pro',30)">+30д PRO</button>
+        <button type="button" class="chip" onclick="hideM();openUserModal('${handleRef}','add_credits',20)">+20 ИИ</button>
+        <button type="button" class="chip" onclick="hideM();openUserModal('${handleRef}','reset_limits',0)">Сброс лимитов</button>
+      </div>
+      <div class="card" style="margin-top:10px;background:var(--c2)">
+        <b>Действия админа (${acts.length})</b>
+        ${acts.length ? acts.map(a => `<div class="item"><span class="pill">${esc(a.action)}</span> ${esc(a.details)} <span class="hint">· ${fmtDate(a.ts)}</span></div>`).join("") : `<div class="hint">Ручных действий пока нет</div>`}
+      </div>
+      <div class="card" style="margin-top:10px;background:var(--c2)">
+        <b>Платежи (${pays.length})</b>
+        ${pays.length ? pays.map(p => `<div class="item">${esc(p.item_id)} · ${num(p.amount_rub) > 0 ? Math.round(num(p.amount_rub)) + " ₽" : num(p.stars) + " ⭐"} · ${fmtDate(p.ts)}</div>`).join("") : `<div class="hint">Платежей нет</div>`}
+      </div>
+      <div class="card" style="margin-top:10px;background:var(--c2)">
+        <b>Обращения (${reqs.length})</b>
+        ${reqs.length ? reqs.map(r => `<div class="item">#${r.id} [${esc(r.status)}] ${esc(r.message)}</div>`).join("") : `<div class="hint">Обращений нет</div>`}
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn alt" onclick="hideM()">Закрыть</button>
+        <button class="btn f1" onclick="hideM();openUserModal('${handleRef}')">⚙️ PRO / Запросы</button>
+      </div>
+    `);
+  } catch (e) {
+    toast(e.message, 3600);
+  }
+}
+
+async function refreshBroadcastPreview() {
+  const aud = document.getElementById("bAud")?.value || "all";
+  const el = document.getElementById("bAudCount");
+  if (!el) return;
+  try {
+    const r = await api(`/api/admin/broadcast/preview?audience=${encodeURIComponent(aud)}`);
+    el.textContent = `Аудитория: ~${num(r.count)} польз.`;
+  } catch (_) {}
+}
+
+function applyBcTemplate(tpl) {
+  const ta = document.getElementById("bText");
+  const prev = document.getElementById("bPrev");
+  if (!ta) return;
+  ta.value = tpl;
+  if (prev) prev.textContent = tpl;
+}
+
+function buildFinalBroadcastMessage() {
+  const rawMsg = (document.getElementById("bText")?.value || "").trim();
+  const btnText = (document.getElementById("bBtnText")?.value || "").trim();
+  const btnUrl = (document.getElementById("bBtnUrl")?.value || "").trim();
+  let finalMsg = rawMsg;
+  if (btnText && btnUrl) {
+    finalMsg = `${rawMsg}
+
+👉 ${btnText}: ${btnUrl}`;
+  }
+  return { rawMsg, finalMsg, btnText, btnUrl };
+}
+
+function openBroadcastModal() {
+  const hist = getBcHistory();
+  showM(`
+    <h2>Рассылка пользователям</h2>
+    <div class="row sp" style="margin-top:4px">
+      <label class="hint">Аудитория</label>
+      <span class="pill" id="bAudCount">Аудитория: ...</span>
+    </div>
+    <select id="bAud" style="margin-top:4px" onchange="refreshBroadcastPreview()">
+      <option value="all">Все пользователи</option>
+      <option value="free">Только бесплатные (без PRO)</option>
+      <option value="pro">Только активные PRO</option>
+    </select>
+    <div class="qgrid">
+      <button type="button" class="chip" onclick="applyBcTemplate('🥗 Обновление SnapEat! Проверьте новые возможности в дневнике и сохраняйте любимые наборы блюд в 1 тап.')">Шаблон: Обновление</button>
+      <button type="button" class="chip" onclick="applyBcTemplate('👑 Напоминание о SnapEat PRO: безлимитный расчёт по фото/тексту и готовые ИИ-рационы под вашу цель.')">Шаблон: Промо PRO</button>
+      <button type="button" class="chip" onclick="applyBcTemplate('⚡ Давно не заглядывали в дневник? Запишите сегодняшний приём пищи — начнём с малого.')">Шаблон: Реактивация</button>
+    </div>
+    <label class="hint" style="display:block;margin-top:10px">Текст сообщения</label>
+    <textarea id="bText" rows="4" oninput="document.getElementById('bPrev').textContent=buildFinalBroadcastMessage().finalMsg" placeholder="Например: Вышло обновление SnapEat! Добавили быстрый повтор приёмов пищи..." style="margin-top:4px"></textarea>
+    <div class="g2" style="margin-top:8px">
+      <div>
+        <label class="hint">Текст ссылки/кнопки (опц.)</label>
+        <input id="bBtnText" placeholder="Открыть дневник" oninput="document.getElementById('bPrev').textContent=buildFinalBroadcastMessage().finalMsg" style="margin-top:4px"/>
+      </div>
+      <div>
+        <label class="hint">URL ссылки (опц.)</label>
+        <input id="bBtnUrl" placeholder="https://t.me/..." oninput="document.getElementById('bPrev').textContent=buildFinalBroadcastMessage().finalMsg" style="margin-top:4px"/>
+      </div>
+    </div>
+    <div class="hint" style="margin-top:8px">Превью:</div>
+    <div class="card" id="bPrev" style="margin-top:4px;background:var(--c2);white-space:pre-wrap"></div>
+    ${hist.length ? `
+      <div class="card" style="margin-top:10px;background:var(--c2)">
+        <b>Последние рассылки (${hist.length})</b>
+        ${hist.slice(0, 4).map(h => `<div class="item"><span class="pill">${esc(h.audience)}</span> ${esc(h.preview)} <span class="hint">· ${fmtDate(h.ts)}</span></div>`).join("")}
+      </div>
+    ` : ""}
+    <div class="row" style="margin-top:14px">
+      <button class="btn alt" onclick="hideM()">Отмена</button>
+      <button class="btn gold f1" onclick="submitBroadcast()">Подтвердить и запустить</button>
+    </div>
+  `);
+  refreshBroadcastPreview();
+}
+
+async function submitBroadcast() {
+  const audience = document.getElementById("bAud")?.value || "all";
+  const { rawMsg, finalMsg } = buildFinalBroadcastMessage();
+  if (rawMsg.length < 3) return toast("Введите текст сообщения");
+  if (!confirm(`Запустить рассылку (${audience}) с этим текстом?`)) return;
+  try {
+    const res = await api("/api/admin/broadcast", { method: "POST", body: JSON.stringify({ audience, message: finalMsg }) });
+    BC_JOB = res.job || null;
+    pushBcHistory({
+      audience,
+      preview: finalMsg.slice(0, 80) + (finalMsg.length > 80 ? "…" : ""),
+      ts: Math.floor(Date.now() / 1000)
+    });
+    hideM();
+    toast("Фоновая рассылка запущена");
+    pollBroadcastStatus();
+    render();
+  } catch (e) {
+    toast(e.message, 3600);
+  }
+}
+
+async function pollBroadcastStatus() {
+  clearInterval(_bcPollTimer);
+  _bcPollTimer = setInterval(async () => {
+    try {
+      const r = await api("/api/admin/broadcast/status");
+      BC_JOB = r.job || null;
+      if (T === "dash") render();
+      if (!BC_JOB || BC_JOB.status !== "running") {
+        clearInterval(_bcPollTimer);
+      }
+    } catch (_) {
+      clearInterval(_bcPollTimer);
+    }
+  }, 1500);
+}
+
+function openManualPaymentModal() {
+  showM(`
+    <h2>Ручное зачисление платежа</h2>
+    <label class="hint">Пользователь (@username или ID)</label>
+    <input id="mpTarget" placeholder="@username или 123456789" style="margin-top:4px"/>
+    <div class="g2" style="margin-top:10px">
+      <div>
+        <label class="hint">Тариф / пакет</label>
+        <select id="mpItem" style="margin-top:4px">
+          <option value="sub_30d">SnapEat Pro · 30 дней</option>
+          <option value="pack_10">Пакет 10 ИИ-запросов</option>
+          <option value="pack_30">Пакет 30 ИИ-запросов</option>
+          <option value="mealplan_1">ИИ-рацион (1 билет)</option>
+        </select>
+      </div>
+      <div>
+        <label class="hint">Провайдер</label>
+        <select id="mpProv" style="margin-top:4px">
+          <option value="manual">Ручной / чек</option>
+          <option value="yookassa">ЮKassa (₽)</option>
+          <option value="stars">Telegram Stars (⭐)</option>
+        </select>
+      </div>
+    </div>
+    <div class="g2" style="margin-top:10px">
+      <div><label class="hint">Сумма (₽)</label><input id="mpRub" type="number" placeholder="авто по тарифу" style="margin-top:4px"/></div>
+      <div><label class="hint">Звёзды (⭐)</label><input id="mpStars" type="number" value="0" style="margin-top:4px"/></div>
+    </div>
+    <div class="row" style="margin-top:14px">
+      <button class="btn alt" onclick="hideM()">Отмена</button>
+      <button class="btn f1" onclick="submitManualPayment()">Зачислить</button>
+    </div>
+  `);
+}
+
+async function submitManualPayment() {
+  const target = (document.getElementById("mpTarget")?.value || "").trim();
+  const item_id = document.getElementById("mpItem")?.value || "sub_30d";
+  const provider = document.getElementById("mpProv")?.value || "manual";
+  const amount_rub = parseFloat(document.getElementById("mpRub")?.value || "0") || 0;
+  const stars = parseInt(document.getElementById("mpStars")?.value || "0", 10) || 0;
+  if (!target) return toast("Укажите пользователя");
+  try {
+    await api("/api/admin/payments/manual", {
+      method: "POST",
+      body: JSON.stringify({ target, item_id, provider, amount_rub, stars }),
+    });
+    hideM();
+    toast("Платёж зачислен");
+    P_OFFSET = 0;
+    await loadTab("pay");
+  } catch (e) {
+    toast(e.message, 3600);
+  }
+}
+
+async function downloadAdminCsv(kind) {
+  try {
+    const u = new URL(`/api/admin/export/${kind}.csv`, location.origin);
+    if (INIT) u.searchParams.set("init_data", INIT);
+    const r = await fetch(u, { headers: INIT ? { "X-Init-Data": INIT } : {} });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const blob = await r.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `snapeat_${kind}.csv`;
+    a.click();
+    toast("CSV выгружен");
+  } catch (e) {
+    toast(e.message, 3600);
+  }
+}
+
+async function runAiHealthTest() {
+  toast("Проверяю ИИ (текст + vision)...");
+  try {
+    const r = await api("/api/admin/ai-test", { method: "POST" });
+    AI_HEALTH = await api("/api/admin/ai-health").catch(() => AI_HEALTH);
+    render();
+    toast(`Текст: ${r.text_ms}мс · Vision: ${r.vision_ok ? r.vision_ms + "мс" : "ошибка"}`, 4000);
+  } catch (e) {
+    toast(e.message, 4000);
+  }
+}
+
+function setReplyTemplate(txt) {
+  const el = document.getElementById("rReply");
+  if (el) el.value = txt;
+}
+
+function openReqModalById(reqId) {
+  const reqObj = (REQS || []).find(item => Number(item.id) === Number(reqId));
+  if (!reqObj) return toast("Обращение не найдено");
+  showM(`
+    <h2>Обращение #${reqObj.id}</h2>
+    <div class="hint">От: <b>${esc(reqObj.user_name || "Пользователь")}</b> ${reqObj.username ? "(@" + esc(reqObj.username) + ")" : ""} · ID ${reqObj.uid}</div>
+    <div class="card" style="margin-top:8px;background:var(--c2)">${esc(reqObj.message)}</div>
+    <label class="hint" style="display:block;margin-top:10px">Статус</label>
+    <select id="rStatus" style="margin-top:4px">
+      <option value="in_progress" ${reqObj.status === "in_progress" ? "selected" : ""}>В работе</option>
+      <option value="done" ${reqObj.status === "done" ? "selected" : ""}>Решено</option>
+      <option value="rejected" ${reqObj.status === "rejected" ? "selected" : ""}>Отклонено</option>
+      <option value="new" ${reqObj.status === "new" ? "selected" : ""}>Новое</option>
+    </select>
+    <div class="qgrid">
+      <button type="button" class="chip" onclick="setReplyTemplate('Подписка SnapEat Pro активирована! Приятного использования.')">PRO выдан</button>
+      <button type="button" class="chip" onclick="setReplyTemplate('Бонусные ИИ-запросы начислены на ваш баланс. Обновите дневник.')">Запросы начислены</button>
+      <button type="button" class="chip" onclick="setReplyTemplate('Уточните, пожалуйста, время оплаты или пришлите ID/скриншот чека.')">Детали оплаты</button>
+      <button type="button" class="chip" onclick="setReplyTemplate('Лимиты обновляются автоматически. Если бот списал запрос при ошибке — напишите, проверим.')">По лимитам</button>
+    </div>
+    <label class="hint" style="display:block;margin-top:10px">Ответ пользователю в Telegram (необязательно)</label>
+    <textarea id="rReply" rows="3" placeholder="Напишите ответ — он уйдёт пользователю от имени бота..." style="margin-top:4px"></textarea>
+    <label class="hint" style="display:block;margin-top:10px">Внутренняя заметка</label>
+    <input id="rNote" value="${esc(reqObj.admin_note || "")}" placeholder="Например: выдал PRO на 30 дней" style="margin-top:4px"/>
+    <div class="row" style="margin-top:14px">
+      <button class="btn alt" onclick="hideM()">Закрыть</button>
+      <button class="btn f1" onclick="submitReqUpdate(${reqObj.id})">Сохранить</button>
+    </div>
+  `);
+}
+
+async function submitReqUpdate(id) {
+  const status = document.getElementById("rStatus")?.value || "done";
+  const reply_to_user = (document.getElementById("rReply")?.value || "").trim();
+  const admin_note = (document.getElementById("rNote")?.value || "").trim();
+  try {
+    const res = await api(`/api/admin/requests/${id}`, {
+      method: "POST",
+      body: JSON.stringify({ status, reply_to_user, admin_note })
+    });
+    hideM();
+    toast(res.reply_sent ? "Сохранено и ответ отправлен" : "Сохранено");
+    await loadTab("req");
+  } catch (e) {
+    toast(e.message, 3600);
+  }
+}
+
+async function pruneLogsNow() {
+  if (!confirm("Удалить старые записи логов старше срока хранения?")) return;
+  try {
+    await api("/api/admin/logs/prune", { method: "POST" });
+    toast("Старые логи очищены");
+    await loadTab("logs");
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+function render() {
+  const V = document.getElementById("V");
+  if (!V) return;
+
+  if (T === "dash") {
+    const s = STATS || {};
+    const chart = Array.isArray(s.daily_chart) ? s.daily_chart : [];
+    const maxRub = Math.max(100, ...chart.map(x => num(x.rub)));
+    const errs24 = num(s.errors_24h);
+    const openReqs = num(s.open_requests);
+    const bcTotal = Math.max(1, num(BC_JOB?.total));
+    const bcPct = BC_JOB ? Math.min(100, Math.round((num(BC_JOB.processed) / bcTotal) * 100)) : 0;
+
+    let attnHtml = "";
+    if (errs24 > 0 || openReqs > 0) {
+      attnHtml = `
+        <div class="alert-box ${errs24 > 0 ? "bad" : ""}">
+          <b>Требует внимания прямо сейчас</b>
+          <div class="hint" style="margin-top:4px">
+            ${errs24 > 0 ? `• Ошибок за 24ч: <b>${errs24}</b>` : ""}${errs24 > 0 && openReqs > 0 ? " · " : ""}${openReqs > 0 ? `• Открытых обращений: <b>${openReqs}</b>` : ""}
+          </div>
+          <div class="qgrid">
+            ${openReqs > 0 ? `<button type="button" class="chip" onclick="go('req')">💬 Открыть запросы (${openReqs})</button>` : ""}
+            ${errs24 > 0 ? `<button type="button" class="chip" onclick="L_LEVEL='ERROR';L_OFFSET=0;savePersistedState();go('logs')">🪵 Смотреть ERROR</button>` : ""}
+          </div>
+        </div>
+      `;
+    } else if (STATS) {
+      attnHtml = `
+        <div class="alert-box ok">
+          <b>Всё спокойно</b>
+          <div class="hint" style="margin-top:3px">Ошибок за 24ч нет, открытых обращений нет.</div>
+        </div>
+      `;
+    }
+
+    V.innerHTML = `
+      <div class="card">
+        <div class="row sp">
+          <h2>Метрики проекта</h2>
+          <span class="pill ${errs24 > 0 ? "err" : "ok"}">Ошибок 24ч: ${errs24}</span>
+        </div>
+        ${attnHtml}
+        <div class="g2" style="margin-top:10px">
+          <div class="stat"><div class="hint">Всего юзеров</div><div class="v">${num(s.total_users)}</div><div class="hint">+${num(s.new_24h)} за 24ч · +${num(s.new_7d)} за 7д</div></div>
+          <div class="stat"><div class="hint">Активных PRO</div><div class="v" style="color:var(--gold)">${num(s.active_pro)}</div><div class="hint">Активных 24ч: ${num(s.active_24h)}</div></div>
+          <div class="stat"><div class="hint">Выручка (всего)</div><div class="v" style="color:var(--ac)">${Math.round(num(s.total_rub))} ₽</div><div class="hint">${num(s.total_stars)} ⭐ · 30д: ${Math.round(num(s.rub_30d))} ₽</div></div>
+          <div class="stat"><div class="hint">ИИ-запросов</div><div class="v">${num(s.ai_today)}</div><div class="hint">За месяц: ${num(s.ai_month)} · Открыто: ${openReqs}</div></div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button class="btn f1" onclick="openUserModal()">👑 Выдать PRO / Запросы</button>
+          <button class="btn alt f1" onclick="openBroadcastModal()">📣 Рассылка</button>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <button class="btn alt f1" style="padding:7px 10px;font-size:12px" onclick="openManualPaymentModal()">💳 Платёж вручную</button>
+          <button class="btn alt f1" style="padding:7px 10px;font-size:12px" onclick="runAiHealthTest()">🧪 Тест ИИ</button>
+        </div>
+        ${BC_JOB ? `
+          <div class="stat" style="margin-top:10px">
+            <div class="row sp">
+              <b>Рассылка (${esc(BC_JOB.status)})</b>
+              <span class="pill">${num(BC_JOB.processed)}/${num(BC_JOB.total)} (${bcPct}%)</span>
+            </div>
+            <div class="prog"><i style="width:${bcPct}%"></i></div>
+            <div class="hint" style="margin-top:6px">Отправлено: ${num(BC_JOB.sent)} · Ошибок: ${num(BC_JOB.failed)}</div>
+          </div>
+        ` : ""}
+      </div>
+
+      <div class="card">
+        <div class="row sp">
+          <h2 style="margin:0">AI Health, КБЖУ и слоты</h2>
+          <button class="btn alt" style="padding:5px 10px;font-size:12px" onclick="runAiHealthTest()">🧪 Тест ИИ</button>
+        </div>
+        <div class="hint" style="margin-top:6px">
+          Последний успех: <b>${AI_HEALTH?.last_success ? esc(AI_HEALTH.last_success.provider + " · " + AI_HEALTH.last_success.model + (AI_HEALTH.last_success.mode ? " [" + AI_HEALTH.last_success.mode + "]" : "")) : "нет данных"}</b>
+        </div>
+        ${AI_HEALTH?.last_error ? `<div class="hint" style="color:var(--bad);margin-top:3px">Последняя ошибка: ${esc(AI_HEALTH.last_error.error)}</div>` : ""}
+        <div class="hint" style="margin-top:6px">Настроено слотов/моделей: <b>${(AI_HEALTH?.providers || []).length}</b> · Записей еды за 24ч: <b>${num(s.entries_24h)}</b> · Среднее ккал/запись: <b>${Math.round(num(s.avg_entry_kcal))}</b></div>
+        ${(AI_HEALTH?.providers || []).length ? `
+          <div class="qgrid" style="margin-top:8px">
+            ${(AI_HEALTH.providers || []).slice(0, 8).map(pr => `<span class="pill">${esc(pr.name)}: ${esc(pr.model)}</span>`).join("")}
+          </div>
+        ` : ""}
+      </div>
+
+      <div class="card">
+        <div class="row sp">
+          <h2 style="margin:0">Выручка за 7 дней (₽)</h2>
+          <span class="hint">Всего чеков: ${num(s.total_payments)}</span>
+        </div>
+        <div class="wk">
+          ${chart.map(d => {
+            const pct = Math.max(4, Math.min(100, Math.round((num(d.rub) / maxRub) * 100)));
+            return `<div class="d"><span class="hint" style="font-size:10px">${Math.round(num(d.rub))}</span><i style="height:${pct}%"></i><span class="hint" style="font-size:10px;margin-top:4px">${esc(String(d.day || "").slice(5))}</span></div>`;
+          }).join("")}
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  if (T === "users") {
+    V.innerHTML = `
+      <div class="card">
+        <div class="row sp" style="margin-bottom:8px">
+          <h2 style="margin:0">Пользователи</h2>
+          <div class="row" style="gap:6px">
+            <button class="btn alt" style="padding:6px 10px;font-size:12px" onclick="downloadAdminCsv('users')">CSV</button>
+            <button class="btn" style="padding:6px 11px;font-size:12px" onclick="openUserModal()">+ PRO / ИИ</button>
+          </div>
+        </div>
+        <input placeholder="Поиск по @username, имени или ID..." value="${esc(U_Q)}" oninput="U_Q=this.value;U_OFFSET=0;savePersistedState();debounce('u_q',()=>loadTab('users'))"/>
+        <div class="row" style="margin-top:8px;flex-wrap:wrap">
+          <button class="chip ${U_FILTER === "all" ? "on" : ""}" onclick="U_FILTER='all';U_OFFSET=0;savePersistedState();loadTab('users')">Все</button>
+          <button class="chip ${U_FILTER === "pro" ? "on" : ""}" onclick="U_FILTER='pro';U_OFFSET=0;savePersistedState();loadTab('users')">PRO</button>
+          <button class="chip ${U_FILTER === "credits" ? "on" : ""}" onclick="U_FILTER='credits';U_OFFSET=0;savePersistedState();loadTab('users')">С балансом ИИ</button>
+        </div>
+      </div>
+      <div class="card">
+        ${USERS.length ? USERS.map(u => {
+          const refVal = u.username ? "@" + esc(u.username) : String(u.id);
+          return `
+          <div class="item">
+            <div class="row sp">
+              <div>
+                <b>${esc(u.name || "Без имени")}</b>
+                ${u.username ? `<span class="hint">@${esc(u.username)}</span>` : ""}
+                <span class="hint">· ID ${u.id}</span>
+              </div>
+              <span class="pill ${u.is_pro ? "pro" : ""}">${u.is_pro ? `PRO (${u.pro_days_left}д)` : "Free"}</span>
+            </div>
+            <div class="hint" style="margin-top:4px">
+              Баланс ИИ: <b>+${num(u.extra_ai_credits)}</b> · Рационов: <b>${num(u.mealplan_credits)}</b> · Сегодня ИИ: ${num(u.ai_used_today)} · Реф: ${num(u.ref_count)}
+            </div>
+            <div class="hint">Вход: ${fmtDate(u.last_seen)} ${u.kcal ? `· Цель ${u.kcal} ккал` : ""}</div>
+            <div class="row" style="margin-top:8px;flex-wrap:wrap">
+              <button class="btn alt" style="padding:6px 10px;font-size:12px" onclick="openUserDetailModal(${Number(u.id)})">👤 Карточка</button>
+              <button class="btn alt" style="padding:6px 10px;font-size:12px" onclick="openUserModal('${refVal}')">⚙️ PRO / Запросы</button>
+              <button class="chip" onclick="copyText('${esc(u.username ? "@" + u.username : String(u.id))}', 'Скопировано')">📋 Копировать</button>
+            </div>
+          </div>
+        `;
+        }).join("") + (USERS.length >= PAGE_LIM ? `<button class="btn alt" style="margin-top:10px;width:100%" onclick="U_OFFSET+=PAGE_LIM;loadTab('users',true)">Показать ещё</button>` : "") : `<div class="hint">Пользователи не найдены</div>`}
+      </div>
+    `;
+    return;
+  }
+
+  if (T === "pay") {
+    const ykRub = num(PAY_SUMMARY?.yookassa?.rub);
+    const pq = (P_Q || "").trim().toLowerCase();
+    const filteredPays = PAYS.filter(p => {
+      const provMatch = P_PROV === "all" || String(p.provider || "stars").toLowerCase() === P_PROV;
+      if (!provMatch) return false;
+      if (!pq) return true;
+      const hay = `${p.uid || ""} ${p.username || ""} ${p.user_name || ""} ${p.item_id || ""} ${p.item_title || ""} ${p.charge_id || ""} ${p.provider || ""}`.toLowerCase();
+      return hay.includes(pq);
+    });
+
+    V.innerHTML = `
+      <div class="card">
+        <div class="row sp">
+          <h2 style="margin:0">Платежи</h2>
+          <div class="row" style="gap:6px">
+            <button class="btn alt" style="padding:6px 10px;font-size:12px" onclick="downloadAdminCsv('payments')">CSV</button>
+            <button class="btn" style="padding:6px 10px;font-size:12px" onclick="openManualPaymentModal()">+ Вручную</button>
+          </div>
+        </div>
+        <div class="hint" style="margin-top:8px">
+          Stars: <b>${num(PAY_SUMMARY?.stars?.stars)} ⭐</b> (${num(PAY_SUMMARY?.stars?.count)} шт.) · ЮKassa: <b>${Math.round(ykRub)} ₽</b> (${num(PAY_SUMMARY?.yookassa?.count)} шт.) · Ручные: <b>${Math.round(num(PAY_SUMMARY?.manual?.rub))} ₽</b>
+        </div>
+        <input placeholder="Фильтр по ID, @username, тарифу или charge_id..." value="${esc(P_Q)}" oninput="P_Q=this.value;savePersistedState();render()" style="margin-top:8px"/>
+        <div class="row" style="margin-top:8px;flex-wrap:wrap">
+          <button class="chip ${P_PROV === "all" ? "on" : ""}" onclick="P_PROV='all';savePersistedState();render()">Все</button>
+          <button class="chip ${P_PROV === "stars" ? "on" : ""}" onclick="P_PROV='stars';savePersistedState();render()">Stars</button>
+          <button class="chip ${P_PROV === "yookassa" ? "on" : ""}" onclick="P_PROV='yookassa';savePersistedState();render()">ЮKassa</button>
+          <button class="chip ${P_PROV === "manual" ? "on" : ""}" onclick="P_PROV='manual';savePersistedState();render()">Ручные</button>
+        </div>
+      </div>
+      <div class="card">
+        ${filteredPays.length ? filteredPays.map(p => `
+          <div class="item">
+            <div class="row sp">
+              <b>${esc(p.item_title || p.item_id)}</b>
+              <span class="pill ok">${num(p.amount_rub) > 0 ? Math.round(num(p.amount_rub)) + " ₽" : num(p.stars) + " ⭐"}</span>
+            </div>
+            <div class="hint" style="margin-top:3px">
+              ${p.username ? "@" + esc(p.username) : esc(p.user_name || "ID " + p.uid)} (ID ${p.uid}) · ${esc(p.provider || "stars")} · ${fmtDate(p.ts)}
+            </div>
+            <div class="row sp" style="margin-top:4px">
+              <span class="hint mono" style="font-size:11px;opacity:.75">${esc(p.charge_id)}</span>
+              ${p.charge_id ? `<button type="button" class="chip" style="padding:3px 8px;font-size:11px" onclick="copyText('${esc(p.charge_id)}', 'ID чека скопирован')">ID чека</button>` : ""}
+            </div>
+          </div>
+        `).join("") + (PAYS.length >= PAGE_LIM ? `<button class="btn alt" style="margin-top:10px;width:100%" onclick="P_OFFSET+=PAGE_LIM;loadTab('pay',true)">Показать ещё</button>` : "") : `<div class="hint">Платежей не найдено</div>`}
+      </div>
+    `;
+    return;
+  }
+
+  if (T === "req") {
+    V.innerHTML = `
+      <div class="card">
+        <h2>Обращения пользователей</h2>
+        <div class="row" style="flex-wrap:wrap">
+          <button class="chip ${R_STATUS === "open" ? "on" : ""}" onclick="R_STATUS='open';R_OFFSET=0;savePersistedState();loadTab('req')">Открытые</button>
+          <button class="chip ${R_STATUS === "done" ? "on" : ""}" onclick="R_STATUS='done';R_OFFSET=0;savePersistedState();loadTab('req')">Решённые</button>
+          <button class="chip ${R_STATUS === "all" ? "on" : ""}" onclick="R_STATUS='all';R_OFFSET=0;savePersistedState();loadTab('req')">Все</button>
+        </div>
+      </div>
+      <div class="card">
+        ${REQS.length ? REQS.map(r => `
+          <div class="item">
+            <div class="row sp">
+              <div><b>#${r.id}</b> · ${esc(r.user_name || "Юзер")} ${r.username ? "(@" + esc(r.username) + ")" : ""} <span class="hint">· ID ${r.uid}</span></div>
+              <span class="pill ${r.status === "done" ? "ok" : "warn"}">${esc(r.status)}</span>
+            </div>
+            <div style="margin-top:6px">${esc(r.message)}</div>
+            ${r.admin_note ? `<div class="hint" style="margin-top:4px">Заметка: ${esc(r.admin_note)}</div>` : ""}
+            <div class="row sp" style="margin-top:8px;flex-wrap:wrap">
+              <span class="hint">${fmtDate(r.created_at)}</span>
+              <div class="row" style="gap:6px">
+                <button class="btn alt" style="padding:6px 10px;font-size:12px" onclick="openUserDetailModal(${Number(r.uid)})">👤 Юзер</button>
+                <button class="btn alt" style="padding:6px 10px;font-size:12px" onclick="openReqModalById(${Number(r.id)})">Ответить / Статус</button>
+              </div>
+            </div>
+          </div>
+        `).join("") + (REQS.length >= PAGE_LIM ? `<button class="btn alt" style="margin-top:10px;width:100%" onclick="R_OFFSET+=PAGE_LIM;loadTab('req',true)">Показать ещё</button>` : "") : `<div class="hint">Обращений нет</div>`}
+      </div>
+    `;
+    return;
+  }
+
+  if (T === "logs") {
+    V.innerHTML = `
+      <div class="card">
+        <div class="row sp" style="margin-bottom:8px">
+          <h2 style="margin:0">Логи бота (${num(STATS?.log_retention_days || 10)} дн.)</h2>
+          <button class="btn dn" style="width:auto;padding:6px 10px;font-size:12px" onclick="pruneLogsNow()">Очистить старые</button>
+        </div>
+        <input placeholder="Поиск по событию, тексту или ID..." value="${esc(L_Q)}" oninput="L_Q=this.value;L_OFFSET=0;savePersistedState();debounce('l_q',()=>loadTab('logs'))"/>
+        <div class="row" style="margin-top:8px;flex-wrap:wrap">
+          <button class="chip ${L_LEVEL === "" ? "on" : ""}" onclick="L_LEVEL='';L_OFFSET=0;savePersistedState();loadTab('logs')">Все</button>
+          <button class="chip ${L_LEVEL === "ERROR" ? "on" : ""}" onclick="L_LEVEL='ERROR';L_OFFSET=0;savePersistedState();loadTab('logs')">ERROR</button>
+          <button class="chip ${L_LEVEL === "WARNING" ? "on" : ""}" onclick="L_LEVEL='WARNING';L_OFFSET=0;savePersistedState();loadTab('logs')">WARNING</button>
+          <button class="chip ${L_LEVEL === "INFO" ? "on" : ""}" onclick="L_LEVEL='INFO';L_OFFSET=0;savePersistedState();loadTab('logs')">INFO</button>
+        </div>
+      </div>
+      <div class="card">
+        ${LOGS.length ? LOGS.map(l => `
+          <div class="item">
+            <div class="row sp">
+              <div><span class="pill ${l.level === "ERROR" ? "err" : l.level === "WARNING" ? "warn" : "ok"}">${esc(l.level)}</span> <b>${esc(l.event)}</b> ${l.uid ? `<span class="hint">· ID ${l.uid}</span>` : ""}</div>
+              <div class="row" style="gap:6px">
+                <span class="hint">${fmtDate(l.ts)}</span>
+                ${l.details ? `<button type="button" class="chip" style="padding:3px 8px;font-size:11px" onclick="copyText(${JSON.stringify(String(l.details))}, 'Лог скопирован')">📋</button>` : ""}
+              </div>
+            </div>
+            ${l.details ? `<div class="hint mono" style="margin-top:4px;word-break:break-word">${esc(l.details)}</div>` : ""}
+          </div>
+        `).join("") + (LOGS.length >= PAGE_LIM ? `<button class="btn alt" style="margin-top:10px;width:100%" onclick="L_OFFSET+=PAGE_LIM;loadTab('logs',true)">Показать ещё</button>` : "") : `<div class="hint">Записей в логе нет</div>`}
+      </div>
+    `;
+  }
+}
+
+loadPersistedState();
+document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b.dataset.t === T));
+render();
+Promise.all([
+  api("/api/admin/stats").then(s => { STATS = s; }).catch(e => toast(e.message, 4000)),
+  api("/api/admin/ai-health").then(ah => { AI_HEALTH = ah; }).catch(() => {}),
+  api("/api/admin/broadcast/status").then(bc => { if (bc && bc.job) { BC_JOB = bc.job; if (BC_JOB.status === "running") pollBroadcastStatus(); } }).catch(() => {}),
+  T !== "dash" ? loadTab(T) : Promise.resolve()
+]).finally(() => render());
+</script>
+</body>
+</html>

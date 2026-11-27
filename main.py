@@ -456,9 +456,11 @@ def init_db():
         uid BIGINT,
         day TEXT,
         ml INT DEFAULT 0,
+        burned_kcal INT DEFAULT 0,
         PRIMARY KEY(uid, day)
     )"""
     )
+    run("ALTER TABLE water ADD COLUMN IF NOT EXISTS burned_kcal INT DEFAULT 0")
 
     run(
         """CREATE TABLE IF NOT EXISTS favs(
@@ -2909,7 +2911,7 @@ async def state(day: str = "", today: str = "", tz: int = 180, init_data: str = 
             "start_weight": u.get("start_weight"),
         }
     )
-    w = await arun("SELECT ml FROM water WHERE uid=? AND day=?", (u["id"], day))
+    w = await arun("SELECT ml, burned_kcal FROM water WHERE uid=? AND day=?", (u["id"], day))
     recent = await arun(
         "SELECT name, grams, kcal, p, f, c, last_ts FROM ("
         "SELECT DISTINCT ON (name, ROUND(COALESCE(grams, 0)::numeric)) name, grams, kcal, p, f, c, ts AS last_ts "
@@ -2935,6 +2937,7 @@ async def state(day: str = "", today: str = "", tz: int = 180, init_data: str = 
         **{k: ai[k] for k in ("free_daily_limit", "daily_limit", "used_today", "remaining_daily_today", "extra_ai_credits", "mealplan_credits", "is_pro", "pro_until")},
         "suggest": suggest(rem) if has else [],
         "water": w[0]["ml"] if w else 0,
+        "burned_kcal": int((w[0].get("burned_kcal") if w else 0) or 0),
         "water_goal": water_goal(u["weight"], u.get("workouts_per_week") or 0),
         "streak": streak,
         "favs": favs,
