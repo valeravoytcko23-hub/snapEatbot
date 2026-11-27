@@ -412,7 +412,8 @@ def init_db():
         pro_exp_warn_0d INT DEFAULT 0,
         last_weekly_digest TEXT DEFAULT '',
         last_nudge_ts BIGINT DEFAULT 0,
-        channel_subscribed INT DEFAULT 0
+        channel_subscribed INT DEFAULT 0,
+        channel_prompt_shown INT DEFAULT 0
     )"""
     )
     run("ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT DEFAULT ''")
@@ -431,6 +432,7 @@ def init_db():
     run("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_weekly_digest TEXT DEFAULT ''")
     run("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_nudge_ts BIGINT DEFAULT 0")
     run("ALTER TABLE users ADD COLUMN IF NOT EXISTS channel_subscribed INT DEFAULT 0")
+    run("ALTER TABLE users ADD COLUMN IF NOT EXISTS channel_prompt_shown INT DEFAULT 0")
     run("CREATE INDEX IF NOT EXISTS ix_users_username ON users (LOWER(username))")
 
     run(
@@ -2950,12 +2952,20 @@ async def state(day: str = "", today: str = "", tz: int = 180, init_data: str = 
         "support": {"handle": SUPPORT_HANDLE, "url": SUPPORT_URL},
         "channel": {"handle": CHANNEL_HANDLE, "url": CHANNEL_URL},
         "channel_subscribed": bool(u.get("channel_subscribed")),
+        "channel_prompt_shown": bool(u.get("channel_prompt_shown")),
     }
 
 
 class SupportRequestCreate(BaseModel):
     category: Literal["general", "payment", "subscription", "bug"] = "general"
     message: str = Field(min_length=3, max_length=800)
+
+
+@app.post("/api/channel-prompt-shown")
+async def mark_channel_prompt_shown(init_data: str = "", x_init_data: str = Header(default="")):
+    tu = auth(x_init_data or init_data)
+    await arun("UPDATE users SET channel_prompt_shown=1 WHERE id=?", (tu["id"],))
+    return {"ok": True}
 
 
 @app.post("/api/support/request")
@@ -3240,6 +3250,23 @@ async def add_water(r: WaterReq, init_data: str = "", x_init_data: str = Header(
         (tu["id"], day, new_ml),
     )
     return {"water": new_ml}
+
+
+class BurnedReq(BaseModel):
+    day: str
+    kcal: int = Field(ge=0, le=20000)
+
+
+@app.post("/api/burned")
+async def set_burned_kcal(r: BurnedReq, init_data: str = "", x_init_data: str = Header(default="")):
+    tu = auth(x_init_data or init_data)
+    day = norm_day(r.day)
+    val = max(0, min(20000, int(r.kcal)))
+    await arun(
+        "INSERT INTO water(uid,day,ml,burned_kcal) VALUES(?,?,0,?) ON CONFLICT(uid,day) DO UPDATE SET burned_kcal=EXCLUDED.burned_kcal",
+        (tu["id"], day, val),
+    )
+    return {"burned_kcal": val}
 
 
 @app.post("/api/fav")
