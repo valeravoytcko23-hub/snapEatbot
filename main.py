@@ -1,24 +1,44 @@
-import os, json, hmac, hashlib, html, time, threading, re, logging, random, uuid, asyncio, base64
+import asyncio
+import base64
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
+import hashlib
+import hmac
+import html
+import json
+import logging
+import os
 from pathlib import Path
+import random
+import re
+import threading
+import time
 from typing import Literal
 from urllib.parse import parse_qsl
+import uuid
 
+from aiogram import Bot, Dispatcher, F
+from aiogram.exceptions import TelegramRetryAfter
+from aiogram.filters import Command, CommandStart
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    LabeledPrice,
+    MenuButtonWebApp,
+    Message,
+    PreCheckoutQuery,
+    Update,
+    WebAppInfo,
+)
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 import httpx
 import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
-from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
-from aiogram import Bot, Dispatcher, F
-from aiogram.filters import CommandStart, Command
-from aiogram.types import (
-    Update, Message, CallbackQuery, PreCheckoutQuery, InlineKeyboardMarkup,
-    InlineKeyboardButton, WebAppInfo, LabeledPrice, MenuButtonWebApp
-)
 
 BOT_TOKEN = (os.getenv("BOT_TOKEN") or "").strip()
 DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
@@ -26,6 +46,7 @@ if not BOT_TOKEN:
     raise RuntimeError("Missing required environment variable: BOT_TOKEN")
 if not DATABASE_URL:
     raise RuntimeError("Missing required environment variable: DATABASE_URL")
+
 BASE_URL = (os.getenv("WEBAPP_URL") or os.getenv("RENDER_EXTERNAL_URL") or "").rstrip("/")
 ADMIN_IDS = {
     int(x.strip())
@@ -44,15 +65,14 @@ AI_KEY = (
 AI_MODEL = (os.getenv("AI_MODEL") or "gemini-2.5-flash").strip()
 AI_FALLBACK_MODELS = [
     m.strip()
-    for m in (
-        os.getenv("AI_FALLBACK_MODELS")
-        or "gemini-2.5-flash,gemini-2.0-flash"
-    ).split(",")
+    for m in (os.getenv("AI_FALLBACK_MODELS") or "gemini-2.5-flash,gemini-2.0-flash").split(",")
     if m.strip()
 ]
 
 GROQ_API_KEY = (os.getenv("GROQ_API_KEY") or "").strip()
-GROQ_BASE_URL = (os.getenv("GROQ_BASE_URL") or "https://api.groq.com/openai/v1/chat/completions").strip()
+GROQ_BASE_URL = (
+    os.getenv("GROQ_BASE_URL") or "https://api.groq.com/openai/v1/chat/completions"
+).strip()
 GROQ_MODELS = [
     m.strip()
     for m in (
@@ -63,79 +83,47 @@ GROQ_MODELS = [
     if m.strip()
 ]
 
-FREE_FALLBACK_API_KEY = (
-    os.getenv("FREE_FALLBACK_API_KEY")
-    or os.getenv("OPENROUTER_API_KEY")
-    or os.getenv("AI_KEY_2")
-    or ""
-).strip()
-FREE_FALLBACK_BASE_URL = (os.getenv("FREE_FALLBACK_BASE_URL") or "https://openrouter.ai/api/v1/chat/completions").strip()
-FREE_FALLBACK_MODELS = [
-    m.strip()
-    for m in (os.getenv("FREE_FALLBACK_MODELS") or os.getenv("FREE_FALLBACK_MODEL") or "openrouter/free").split(",")
-    if m.strip()
-]
+DEFAULT_FREE_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
+DEFAULT_FREE_MODELS = ["openrouter/free"]
 
-FREE_FALLBACK_2_API_KEY = (os.getenv("FREE_FALLBACK_2_API_KEY") or os.getenv("AI_KEY_3") or "").strip()
-FREE_FALLBACK_2_BASE_URL = (os.getenv("FREE_FALLBACK_2_BASE_URL") or "https://openrouter.ai/api/v1/chat/completions").strip()
-FREE_FALLBACK_2_MODELS = [
-    m.strip()
-    for m in (os.getenv("FREE_FALLBACK_2_MODELS") or os.getenv("FREE_FALLBACK_2_MODEL") or "openrouter/free").split(",")
-    if m.strip()
-]
 
-FREE_FALLBACK_3_API_KEY = (os.getenv("FREE_FALLBACK_3_API_KEY") or os.getenv("AI_KEY_4") or "").strip()
-FREE_FALLBACK_3_BASE_URL = (os.getenv("FREE_FALLBACK_3_BASE_URL") or "https://openrouter.ai/api/v1/chat/completions").strip()
-FREE_FALLBACK_3_MODELS = [
-    m.strip()
-    for m in (os.getenv("FREE_FALLBACK_3_MODELS") or os.getenv("FREE_FALLBACK_3_MODEL") or "openrouter/free").split(",")
-    if m.strip()
-]
+def _load_free_slots() -> list[tuple[str, str, str, list[str]]]:
+    slots: list[tuple[str, str, str, list[str]]] = []
+    for idx in range(1, 9):
+        if idx == 1:
+            key = (
+                os.getenv("FREE_FALLBACK_API_KEY")
+                or os.getenv("OPENROUTER_API_KEY")
+                or os.getenv("AI_KEY_2")
+                or ""
+            ).strip()
+            url = (os.getenv("FREE_FALLBACK_BASE_URL") or DEFAULT_FREE_BASE_URL).strip()
+            raw_models = os.getenv("FREE_FALLBACK_MODELS") or os.getenv("FREE_FALLBACK_MODEL")
+        else:
+            prefix = f"FREE_FALLBACK_{idx}"
+            key = (os.getenv(f"{prefix}_API_KEY") or os.getenv(f"AI_KEY_{idx + 1}") or "").strip()
+            url = (os.getenv(f"{prefix}_BASE_URL") or DEFAULT_FREE_BASE_URL).strip()
+            raw_models = os.getenv(f"{prefix}_MODELS") or os.getenv(f"{prefix}_MODEL")
 
-FREE_FALLBACK_4_API_KEY = (os.getenv("FREE_FALLBACK_4_API_KEY") or "").strip()
-FREE_FALLBACK_4_BASE_URL = (os.getenv("FREE_FALLBACK_4_BASE_URL") or "https://openrouter.ai/api/v1/chat/completions").strip()
-FREE_FALLBACK_4_MODELS = [
-    m.strip()
-    for m in (os.getenv("FREE_FALLBACK_4_MODELS") or os.getenv("FREE_FALLBACK_4_MODEL") or "openrouter/free").split(",")
-    if m.strip()
-]
+        models = (
+            [m.strip() for m in raw_models.split(",") if m.strip()]
+            if raw_models
+            else list(DEFAULT_FREE_MODELS)
+        )
+        if key and url and models:
+            slots.append((f"Бесплатный резерв {idx}", key, url, models))
+    return slots
 
-FREE_FALLBACK_5_API_KEY = (os.getenv("FREE_FALLBACK_5_API_KEY") or "").strip()
-FREE_FALLBACK_5_BASE_URL = (os.getenv("FREE_FALLBACK_5_BASE_URL") or "https://openrouter.ai/api/v1/chat/completions").strip()
-FREE_FALLBACK_5_MODELS = [
-    m.strip()
-    for m in (os.getenv("FREE_FALLBACK_5_MODELS") or os.getenv("FREE_FALLBACK_5_MODEL") or "openrouter/free").split(",")
-    if m.strip()
-]
 
-FREE_FALLBACK_6_API_KEY = (os.getenv("FREE_FALLBACK_6_API_KEY") or "").strip()
-FREE_FALLBACK_6_BASE_URL = (os.getenv("FREE_FALLBACK_6_BASE_URL") or "https://openrouter.ai/api/v1/chat/completions").strip()
-FREE_FALLBACK_6_MODELS = [
-    m.strip()
-    for m in (os.getenv("FREE_FALLBACK_6_MODELS") or os.getenv("FREE_FALLBACK_6_MODEL") or "openrouter/free").split(",")
-    if m.strip()
-]
-
-FREE_FALLBACK_7_API_KEY = (os.getenv("FREE_FALLBACK_7_API_KEY") or "").strip()
-FREE_FALLBACK_7_BASE_URL = (os.getenv("FREE_FALLBACK_7_BASE_URL") or "https://openrouter.ai/api/v1/chat/completions").strip()
-FREE_FALLBACK_7_MODELS = [
-    m.strip()
-    for m in (os.getenv("FREE_FALLBACK_7_MODELS") or os.getenv("FREE_FALLBACK_7_MODEL") or "openrouter/free").split(",")
-    if m.strip()
-]
-
-FREE_FALLBACK_8_API_KEY = (os.getenv("FREE_FALLBACK_8_API_KEY") or "").strip()
-FREE_FALLBACK_8_BASE_URL = (os.getenv("FREE_FALLBACK_8_BASE_URL") or "https://openrouter.ai/api/v1/chat/completions").strip()
-FREE_FALLBACK_8_MODELS = [
-    m.strip()
-    for m in (os.getenv("FREE_FALLBACK_8_MODELS") or os.getenv("FREE_FALLBACK_8_MODEL") or "openrouter/free").split(",")
-    if m.strip()
-]
+FREE_SLOTS = _load_free_slots()
 
 PROXYAPI_API_KEY = (os.getenv("PROXYAPI_API_KEY") or "").strip()
-PROXYAPI_PRIORITY = (os.getenv("PROXYAPI_PRIORITY") or ("1" if (os.getenv("PROXYAPI_API_KEY") or "").strip() else "0")).strip().lower() in ("1", "true", "yes", "on")
-
-PROXYAPI_BASE_URL = (os.getenv("PROXYAPI_BASE_URL") or "https://api.proxyapi.ru/v1/chat/completions").strip()
+PROXYAPI_PRIORITY = (
+    os.getenv("PROXYAPI_PRIORITY") or ("1" if PROXYAPI_API_KEY else "0")
+).strip().lower() in ("1", "true", "yes", "on")
+PROXYAPI_BASE_URL = (
+    os.getenv("PROXYAPI_BASE_URL") or "https://api.proxyapi.ru/v1/chat/completions"
+).strip()
 PROXYAPI_MODELS = [
     m.strip()
     for m in (
@@ -145,53 +133,48 @@ PROXYAPI_MODELS = [
     ).split(",")
     if m.strip()
 ]
+
 OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
 OPENAI_MODEL = (os.getenv("OPENAI_MODEL") or "gpt-4o-mini").strip()
+
+AI_RELAY_URL = (os.getenv("AI_RELAY_URL") or "").strip()
+RELAY_SECRET = (os.getenv("RELAY_SECRET") or "").strip()
+AI_RELAY_MODELS = [
+    m.strip()
+    for m in (
+        os.getenv("AI_RELAY_MODELS")
+        or os.getenv("AI_RELAY_MODEL")
+        or "gpt-4o-mini"
+    ).split(",")
+    if m.strip()
+]
+AI_RELAY_HEADER = (os.getenv("AI_RELAY_HEADER") or "").strip()
+
 AI_CONCURRENCY = max(1, int(os.getenv("AI_CONCURRENCY", "4")))
 AI_CACHE_TTL = max(60, int(os.getenv("AI_CACHE_TTL", "86400")))
+
 log = logging.getLogger("uvicorn.error")
 AI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent"
 OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
 
-YOOKASSA_SHOP_ID = (os.getenv("YOOKASSA_SHOP_ID") or "REPLACE_WITH_YOOKASSA_SHOP_ID").strip()
-YOOKASSA_SECRET_KEY = (os.getenv("YOOKASSA_SECRET_KEY") or "REPLACE_WITH_YOOKASSA_SECRET_KEY").strip()
+YOOKASSA_SHOP_ID = (os.getenv("YOOKASSA_SHOP_ID") or "").strip()
+YOOKASSA_SECRET_KEY = (os.getenv("YOOKASSA_SECRET_KEY") or "").strip()
 YOOKASSA_RETURN_URL = (
     os.getenv("YOOKASSA_RETURN_URL")
     or (f"{BASE_URL}/?yookassa_return=1" if BASE_URL else "https://t.me/snapeat_manager")
 ).strip()
 YOOKASSA_API_BASE = "https://api.yookassa.ru/v3"
+
 SUPPORT_HANDLE = "@snapeat_manager"
 SUPPORT_URL = "https://t.me/snapeat_manager"
 CHANNEL_HANDLE = "@snapeat_app"
 CHANNEL_URL = "https://t.me/snapeat_app"
+CHANNEL_ID = (os.getenv("CHANNEL_ID") or "").strip()
 
-_ai_sem = asyncio.Semaphore(AI_CONCURRENCY)
-_ai_cache: dict[str, tuple[float, object]] = {}
-_ai_cache_lock = threading.Lock()
-_admin_stats_cache: tuple[float, dict] | None = None
-
-
-def _cache_get(key: str):
-    now = time.time()
-    with _ai_cache_lock:
-        entry = _ai_cache.get(key)
-        if not entry:
-            return None
-        exp, val = entry
-        if now > exp:
-            _ai_cache.pop(key, None)
-            return None
-        return val
-
-
-def _cache_set(key: str, val):
-    with _ai_cache_lock:
-        if len(_ai_cache) > 2000:
-            oldest_keys = sorted(_ai_cache.keys(), key=lambda k: _ai_cache[k][0])[:300]
-            for ok in oldest_keys:
-                _ai_cache.pop(ok, None)
-        _ai_cache[key] = (time.time() + AI_CACHE_TTL, val)
-
+BACKUP_DIR = (os.getenv("BACKUP_DIR") or "/tmp/snapeat_backups").strip()
+BACKUP_INTERVAL_HOURS = max(1, int(os.getenv("BACKUP_INTERVAL_HOURS", "24")))
+FLOOD_WINDOW_SEC = max(1, int(os.getenv("FLOOD_WINDOW_SEC", "3")))
+FLOOD_MAX_HITS = max(2, int(os.getenv("FLOOD_MAX_HITS", "6")))
 
 FREE_MONTHLY_LIMIT = int(os.getenv("FREE_MONTHLY_AI_LIMIT", os.getenv("FREE_AI_LIMIT", "5")))
 PRO_LIMIT = int(os.getenv("PRO_AI_LIMIT", "40"))
@@ -247,13 +230,58 @@ CATALOG = {
 }
 CATALOG_LIST = [{"id": k, **v} for k, v in CATALOG.items()]
 
+MEALS = ("breakfast", "lunch", "dinner", "snack")
+IMG_MIME = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+MAX_IMAGE_BYTES = 3_000_000
+ALLOWED_UPDATES = ["message", "callback_query", "pre_checkout_query"]
 
-def _pg_sql(sql: str) -> str:
-    return sql.replace("?", "%s")
+_ALL_SECRETS = tuple(
+    s
+    for s in (
+        BOT_TOKEN,
+        DATABASE_URL,
+        AI_KEY,
+        GROQ_API_KEY,
+        *[slot[1] for slot in FREE_SLOTS],
+        PROXYAPI_API_KEY,
+        OPENAI_API_KEY,
+        RELAY_SECRET,
+        YOOKASSA_SECRET_KEY,
+    )
+    if s
+)
 
+_ai_sem = asyncio.Semaphore(AI_CONCURRENCY)
+_ai_cache: dict[str, tuple[float, object]] = {}
+_ai_cache_lock = threading.Lock()
+_admin_stats_cache: tuple[float, dict] | None = None
+
+_ai_health_lock = threading.Lock()
+_ai_last_success: dict | None = None
+_ai_last_error: dict | None = None
+_ai_provider_stats: dict[str, dict] = {}
+_user_flood_hits: dict[int, list[float]] = {}
+_last_health_alert_ts: float = 0.0
+_last_backup_ts: float = 0.0
+_broadcast_jobs: dict[str, dict] = {}
+_pending_chat_food: dict[str, dict] = {}
+
+_inflight_ai: dict[str, asyncio.Future] = {}
+_inflight_lock = threading.Lock()
 
 _pool: ConnectionPool | None = None
 _pool_lock = threading.Lock()
+
+
+def _err(msg) -> str:
+    cleaned = " ".join(str(msg).split())
+    for secret in _ALL_SECRETS:
+        cleaned = cleaned.replace(secret, "***")
+    return cleaned[:240]
+
+
+def _pg_sql(sql: str) -> str:
+    return sql.replace("?", "%s")
 
 
 def _get_pool() -> ConnectionPool:
@@ -340,7 +368,8 @@ async def arun_rc(sql, args=()):
 
 
 def init_db():
-    run("""CREATE TABLE IF NOT EXISTS users(
+    run(
+        """CREATE TABLE IF NOT EXISTS users(
         id BIGINT PRIMARY KEY,
         username TEXT DEFAULT '',
         name TEXT,
@@ -378,8 +407,14 @@ def init_db():
         last_reminded TEXT DEFAULT '',
         tz_offset INT DEFAULT 180,
         created_at BIGINT DEFAULT 0,
-        last_seen BIGINT DEFAULT 0
-    )""")
+        last_seen BIGINT DEFAULT 0,
+        pro_exp_warn_3d INT DEFAULT 0,
+        pro_exp_warn_0d INT DEFAULT 0,
+        last_weekly_digest TEXT DEFAULT '',
+        last_nudge_ts BIGINT DEFAULT 0,
+        channel_subscribed INT DEFAULT 0
+    )"""
+    )
     run("ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT DEFAULT ''")
     run("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at BIGINT DEFAULT 0")
     run("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen BIGINT DEFAULT 0")
@@ -391,9 +426,15 @@ def init_db():
     run("ALTER TABLE users ADD COLUMN IF NOT EXISTS workouts_per_week INT DEFAULT 2")
     run("ALTER TABLE users ADD COLUMN IF NOT EXISTS workout_type TEXT DEFAULT 'mixed'")
     run("ALTER TABLE users ADD COLUMN IF NOT EXISTS food_pref TEXT DEFAULT 'balanced'")
+    run("ALTER TABLE users ADD COLUMN IF NOT EXISTS pro_exp_warn_3d INT DEFAULT 0")
+    run("ALTER TABLE users ADD COLUMN IF NOT EXISTS pro_exp_warn_0d INT DEFAULT 0")
+    run("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_weekly_digest TEXT DEFAULT ''")
+    run("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_nudge_ts BIGINT DEFAULT 0")
+    run("ALTER TABLE users ADD COLUMN IF NOT EXISTS channel_subscribed INT DEFAULT 0")
     run("CREATE INDEX IF NOT EXISTS ix_users_username ON users (LOWER(username))")
 
-    run("""CREATE TABLE IF NOT EXISTS entries(
+    run(
+        """CREATE TABLE IF NOT EXISTS entries(
         id BIGSERIAL PRIMARY KEY,
         uid BIGINT,
         day TEXT,
@@ -406,10 +447,21 @@ def init_db():
         src TEXT,
         ts BIGINT,
         meal TEXT DEFAULT 'snack'
-    )""")
+    )"""
+    )
     run("CREATE INDEX IF NOT EXISTS ix_entries ON entries(uid, day)")
-    run("CREATE TABLE IF NOT EXISTS water(uid BIGINT, day TEXT, ml INT DEFAULT 0, PRIMARY KEY(uid, day))")
-    run("""CREATE TABLE IF NOT EXISTS favs(
+
+    run(
+        """CREATE TABLE IF NOT EXISTS water(
+        uid BIGINT,
+        day TEXT,
+        ml INT DEFAULT 0,
+        PRIMARY KEY(uid, day)
+    )"""
+    )
+
+    run(
+        """CREATE TABLE IF NOT EXISTS favs(
         id BIGSERIAL PRIMARY KEY,
         uid BIGINT,
         name TEXT,
@@ -418,8 +470,11 @@ def init_db():
         p DOUBLE PRECISION,
         f DOUBLE PRECISION,
         c DOUBLE PRECISION
-    )""")
-    run("""CREATE TABLE IF NOT EXISTS payments(
+    )"""
+    )
+
+    run(
+        """CREATE TABLE IF NOT EXISTS payments(
         charge_id TEXT PRIMARY KEY,
         uid BIGINT,
         item_id TEXT,
@@ -429,26 +484,38 @@ def init_db():
         status TEXT DEFAULT 'succeeded',
         metadata_json TEXT DEFAULT '{}',
         ts BIGINT
-    )""")
+    )"""
+    )
     run("ALTER TABLE payments ADD COLUMN IF NOT EXISTS amount_rub DOUBLE PRECISION DEFAULT 0")
     run("ALTER TABLE payments ADD COLUMN IF NOT EXISTS provider TEXT DEFAULT 'stars'")
     run("ALTER TABLE payments ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'succeeded'")
     run("ALTER TABLE payments ADD COLUMN IF NOT EXISTS metadata_json TEXT DEFAULT '{}'")
     run("CREATE INDEX IF NOT EXISTS ix_payments_ts ON payments(ts DESC)")
-    run("CREATE TABLE IF NOT EXISTS weights(uid BIGINT, day TEXT, weight DOUBLE PRECISION, PRIMARY KEY(uid, day))")
 
-    run("""CREATE TABLE IF NOT EXISTS bot_logs(
+    run(
+        """CREATE TABLE IF NOT EXISTS weights(
+        uid BIGINT,
+        day TEXT,
+        weight DOUBLE PRECISION,
+        PRIMARY KEY(uid, day)
+    )"""
+    )
+
+    run(
+        """CREATE TABLE IF NOT EXISTS bot_logs(
         id BIGSERIAL PRIMARY KEY,
         ts BIGINT NOT NULL,
         level VARCHAR(10) NOT NULL DEFAULT 'INFO',
         uid BIGINT,
         event VARCHAR(64) NOT NULL,
         details VARCHAR(360) DEFAULT ''
-    )""")
+    )"""
+    )
     run("CREATE INDEX IF NOT EXISTS ix_bot_logs_ts ON bot_logs(ts DESC)")
     run("CREATE INDEX IF NOT EXISTS ix_bot_logs_level_ts ON bot_logs(level, ts DESC)")
 
-    run("""CREATE TABLE IF NOT EXISTS support_requests(
+    run(
+        """CREATE TABLE IF NOT EXISTS support_requests(
         id BIGSERIAL PRIMARY KEY,
         uid BIGINT NOT NULL,
         username TEXT DEFAULT '',
@@ -459,26 +526,24 @@ def init_db():
         admin_note VARCHAR(400) DEFAULT '',
         created_at BIGINT NOT NULL,
         updated_at BIGINT NOT NULL
-    )""")
+    )"""
+    )
     run("CREATE INDEX IF NOT EXISTS ix_support_requests_status ON support_requests(status, created_at DESC)")
 
-    run("ALTER TABLE users ADD COLUMN IF NOT EXISTS pro_exp_warn_3d INT DEFAULT 0")
-    run("ALTER TABLE users ADD COLUMN IF NOT EXISTS pro_exp_warn_0d INT DEFAULT 0")
-    run("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_weekly_digest TEXT DEFAULT ''")
-    run("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_nudge_ts BIGINT DEFAULT 0")
-    run("ALTER TABLE users ADD COLUMN IF NOT EXISTS channel_subscribed INT DEFAULT 0")
-
-    run("""CREATE TABLE IF NOT EXISTS admin_actions(
+    run(
+        """CREATE TABLE IF NOT EXISTS admin_actions(
         id BIGSERIAL PRIMARY KEY,
         ts BIGINT NOT NULL,
         admin_id BIGINT NOT NULL,
         target_uid BIGINT NOT NULL,
         action VARCHAR(32) NOT NULL,
         details VARCHAR(300) DEFAULT ''
-    )""")
+    )"""
+    )
     run("CREATE INDEX IF NOT EXISTS ix_admin_actions_target ON admin_actions(target_uid, ts DESC)")
 
-    run("""CREATE TABLE IF NOT EXISTS user_combos(
+    run(
+        """CREATE TABLE IF NOT EXISTS user_combos(
         id BIGSERIAL PRIMARY KEY,
         uid BIGINT NOT NULL,
         title VARCHAR(80) NOT NULL,
@@ -486,7 +551,8 @@ def init_db():
         items_json TEXT NOT NULL,
         uses_count INT DEFAULT 0,
         created_at BIGINT NOT NULL
-    )""")
+    )"""
+    )
     run("CREATE INDEX IF NOT EXISTS ix_user_combos_uid ON user_combos(uid, id DESC)")
 
 
@@ -499,7 +565,7 @@ def ensure_db_ready(retries: int = 5, delay: float = 1.0):
         except Exception as err:
             last_err = err
             if attempt < retries:
-                log.warning("Database init retry %d/%d: %s", attempt, retries, err)
+                log.warning("Database init retry %d/%d: %s", attempt, retries, _err(err))
                 time.sleep(delay)
     if last_err is not None:
         raise last_err
@@ -511,9 +577,85 @@ except Exception as _db_err:
     log.warning("Initial DB init deferred to lifespan/requests: %s", _err(_db_err))
 
 
+def _cache_get(key: str):
+    now = time.time()
+    with _ai_cache_lock:
+        entry = _ai_cache.get(key)
+        if not entry:
+            return None
+        exp, val = entry
+        if now > exp:
+            _ai_cache.pop(key, None)
+            return None
+        return val
+
+
+def _cache_set(key: str, val):
+    with _ai_cache_lock:
+        if len(_ai_cache) > 2000:
+            oldest_keys = sorted(_ai_cache.keys(), key=lambda k: _ai_cache[k][0])[:300]
+            for ok in oldest_keys:
+                _ai_cache.pop(ok, None)
+        _ai_cache[key] = (time.time() + AI_CACHE_TTL, val)
+
+
+def _record_ai_success(provider_label: str, model_name: str, mode: str = "text"):
+    now_ts = int(time.time())
+    key = f"{provider_label} ({model_name})"
+    with _ai_health_lock:
+        st = _ai_provider_stats.setdefault(
+            key, {"ok": 0, "err": 0, "last_ok": 0, "last_err": 0, "last_err_msg": ""}
+        )
+        st["ok"] += 1
+        st["last_ok"] = now_ts
+        global _ai_last_success
+        _ai_last_success = {"provider": provider_label, "model": model_name, "mode": mode, "ts": now_ts}
+
+
+def _record_ai_error(provider_label: str, model_name: str, err_msg: str, mode: str = "text"):
+    now_ts = int(time.time())
+    clean_msg = _err(err_msg)
+    key = f"{provider_label} ({model_name})"
+    with _ai_health_lock:
+        st = _ai_provider_stats.setdefault(
+            key, {"ok": 0, "err": 0, "last_ok": 0, "last_err": 0, "last_err_msg": ""}
+        )
+        st["err"] += 1
+        st["last_err"] = now_ts
+        st["last_err_msg"] = clean_msg
+        global _ai_last_error
+        _ai_last_error = {
+            "provider": provider_label,
+            "model": model_name,
+            "mode": mode,
+            "error": clean_msg,
+            "ts": now_ts,
+        }
+
+
+def check_flood(uid: int, bucket: str = "ai") -> bool:
+    if not uid or uid in ADMIN_IDS:
+        return True
+    now = time.monotonic()
+    k = uid * 10 + (1 if bucket == "support" else 0)
+    with _ai_health_lock:
+        arr = [t for t in _user_flood_hits.get(k, []) if now - t <= FLOOD_WINDOW_SEC]
+        if len(arr) >= FLOOD_MAX_HITS:
+            _user_flood_hits[k] = arr
+            return False
+        arr.append(now)
+        _user_flood_hits[k] = arr
+        return True
+
+
 def _normalize_username(raw_username: str) -> str:
-    u = re.sub(r"[^A-Za-z0-9_]", "", (raw_username or "").lstrip("@").strip())
-    return u[:40]
+    cleaned = re.sub(r"[^A-Za-z0-9_]", "", (raw_username or "").lstrip("@").strip())
+    return cleaned[:40]
+
+
+def _sanitize_name(raw_name: str, fallback: str = "Друг") -> str:
+    cleaned = re.sub(r"\s+", " ", (raw_name or "").strip())
+    return cleaned[:60] if cleaned else fallback
 
 
 def db_log(level: str, event: str, details: str = "", uid: int | None = None):
@@ -538,22 +680,13 @@ def prune_old_logs():
         cutoff = int(time.time()) - LOG_RETENTION_DAYS * 86400
         deleted_old = run_rc("DELETE FROM bot_logs WHERE ts < ?", (cutoff,))
         deleted_cap = run_rc(
-            "DELETE FROM bot_logs WHERE id IN ("
-            "SELECT id FROM bot_logs ORDER BY ts DESC OFFSET ?"
-            ")",
+            "DELETE FROM bot_logs WHERE id IN (SELECT id FROM bot_logs ORDER BY ts DESC OFFSET ?)",
             (LOG_MAX_ROWS,),
         )
         if deleted_old or deleted_cap:
             log.info("Pruned bot_logs: old=%d, cap=%d", deleted_old, deleted_cap)
     except Exception as e:
         log.warning("prune_old_logs failed: %s", _err(e))
-
-
-def _sanitize_name(raw_name: str, fallback: str = "Друг") -> str:
-    cleaned = re.sub(r"\s+", " ", (raw_name or "").strip())
-    if not cleaned:
-        return fallback
-    return cleaned[:60]
 
 
 def get_user(uid, name="", ref_by=None, username=""):
@@ -563,10 +696,8 @@ def get_user(uid, name="", ref_by=None, username=""):
     existing = run("SELECT * FROM users WHERE id=?", (uid,))
     if not existing:
         valid_ref = None
-        if ref_by and ref_by != uid:
-            ref_u = run("SELECT id FROM users WHERE id=?", (ref_by,))
-            if ref_u:
-                valid_ref = ref_by
+        if ref_by and ref_by != uid and run("SELECT id FROM users WHERE id=?", (ref_by,)):
+            valid_ref = ref_by
         inserted = run_rc(
             "INSERT INTO users(id, username, name, extra_ai_credits, ref_by, created_at, last_seen) "
             "VALUES(?,?,?,?,?,?,?) ON CONFLICT (id) DO NOTHING",
@@ -574,11 +705,12 @@ def get_user(uid, name="", ref_by=None, username=""):
         )
         if inserted > 0:
             db_log("INFO", "user_registered", f"@{clean_un or '-'} {safe_name}".strip(), uid=uid)
-        if valid_ref and inserted > 0:
-            run(
-                "UPDATE users SET extra_ai_credits=COALESCE(extra_ai_credits,0)+5, ref_count=COALESCE(ref_count,0)+1 WHERE id=?",
-                (valid_ref,),
-            )
+            if valid_ref:
+                run(
+                    "UPDATE users SET extra_ai_credits=COALESCE(extra_ai_credits,0)+5, "
+                    "ref_count=COALESCE(ref_count,0)+1 WHERE id=?",
+                    (valid_ref,),
+                )
     else:
         u0 = existing[0]
         updates = []
@@ -602,15 +734,15 @@ def auth(init: str) -> dict:
     try:
         if not init or not isinstance(init, str):
             raise ValueError
-        d = dict(parse_qsl(init, keep_blank_values=True))
-        got = d.pop("hash")
-        check = "\n".join(f"{k}={v}" for k, v in sorted(d.items()))
+        data = dict(parse_qsl(init, keep_blank_values=True))
+        got = data.pop("hash")
+        check = "\n".join(f"{k}={v}" for k, v in sorted(data.items()))
         key = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
         if not hmac.compare_digest(hmac.new(key, check.encode(), hashlib.sha256).hexdigest(), got):
             raise ValueError
-        if time.time() - int(d["auth_date"]) > 172800:
+        if time.time() - int(data["auth_date"]) > 172800:
             raise ValueError
-        return json.loads(d["user"])
+        return json.loads(data["user"])
     except Exception:
         raise HTTPException(401, "Откройте приложение из Telegram")
 
@@ -652,11 +784,7 @@ def calc_norms(
         protein_mult += 0.2
     p = max(40.0, weight * protein_mult)
 
-    fat_mult = 0.9
-    if food_pref == "low_carb":
-        fat_mult = 1.05
-    elif food_pref == "low_sweet":
-        fat_mult = 0.92
+    fat_mult = 1.05 if food_pref == "low_carb" else (0.92 if food_pref == "low_sweet" else 0.9)
     f = max(25.0, weight * fat_mult)
 
     c = max((kcal - p * 4.0 - f * 9.0) / 4.0, 0.0)
@@ -664,12 +792,7 @@ def calc_norms(
         c = min(c, max(60.0, (kcal * 0.25) / 4.0))
         f = max(f, (kcal - p * 4.0 - c * 4.0) / 9.0)
 
-    return {
-        "kcal": round(kcal),
-        "p": round(p),
-        "f": round(f),
-        "c": round(c),
-    }
+    return {"kcal": round(kcal), "p": round(p), "f": round(f), "c": round(c)}
 
 
 def water_goal(weight, workouts_per_week=0):
@@ -679,20 +802,43 @@ def water_goal(weight, workouts_per_week=0):
 
 
 FOODS = [
-    ("Куриная грудка варёная", 165, 31, 3.6, 0, 150), ("Творог 5%", 121, 17, 5, 1.8, 150),
-    ("Греческий йогурт", 60, 10, 0.4, 4, 200), ("Яйца варёные", 155, 13, 11, 1.1, 110),
-    ("Тунец в собственном соку", 116, 26, 1, 0, 100), ("Лосось запечённый", 208, 20, 13, 0, 120),
-    ("Говядина тушёная", 190, 27, 9, 0, 120), ("Гречка варёная", 110, 4, 1, 21, 200),
-    ("Рис варёный", 130, 2.7, 0.3, 28, 200), ("Овсянка на воде", 71, 2.5, 1.5, 12, 250),
-    ("Банан", 89, 1.1, 0.3, 23, 120), ("Яблоко", 52, 0.3, 0.2, 14, 180),
-    ("Миндаль", 579, 21, 50, 22, 30), ("Авокадо", 160, 2, 15, 9, 100),
-    ("Арахисовая паста", 588, 25, 50, 20, 20), ("Цельнозерновой хлеб", 247, 13, 4, 41, 60),
-    ("Кефир 1%", 40, 3, 1, 4, 250), ("Огурцы и помидоры", 18, 0.9, 0.2, 3.5, 200),
-    ("Протеиновый батончик", 340, 32, 11, 28, 60), ("Протеин сывороточный", 380, 76, 6, 7, 30),
-    ("Сыр сулугуни", 290, 20, 22, 0, 40), ("Индейка филе запечённое", 135, 27, 2.5, 0, 150),
+    ("Куриная грудка варёная", 165, 31, 3.6, 0, 150),
+    ("Творог 5%", 121, 17, 5, 1.8, 150),
+    ("Греческий йогурт", 60, 10, 0.4, 4, 200),
+    ("Яйца варёные", 155, 13, 11, 1.1, 110),
+    ("Тунец в собственном соку", 116, 26, 1, 0, 100),
+    ("Лосось запечённый", 208, 20, 13, 0, 120),
+    ("Говядина тушёная", 190, 27, 9, 0, 120),
+    ("Гречка варёная", 110, 4, 1, 21, 200),
+    ("Рис варёный", 130, 2.7, 0.3, 28, 200),
+    ("Овсянка на воде", 71, 2.5, 1.5, 12, 250),
+    ("Банан", 89, 1.1, 0.3, 23, 120),
+    ("Яблоко", 52, 0.3, 0.2, 14, 180),
+    ("Миндаль", 579, 21, 50, 22, 30),
+    ("Авокадо", 160, 2, 15, 9, 100),
+    ("Арахисовая паста", 588, 25, 50, 20, 20),
+    ("Цельнозерновой хлеб", 247, 13, 4, 41, 60),
+    ("Кефир 1%", 40, 3, 1, 4, 250),
+    ("Огурцы и помидоры", 18, 0.9, 0.2, 3.5, 200),
+    ("Протеиновый батончик", 340, 32, 11, 28, 60),
+    ("Протеин сывороточный", 380, 76, 6, 7, 30),
+    ("Сыр сулугуни", 290, 20, 22, 0, 40),
+    ("Индейка филе запечённое", 135, 27, 2.5, 0, 150),
 ]
-QUICK = {"Греческий йогурт", "Творог 5%", "Банан", "Яблоко", "Миндаль", "Авокадо", "Кефир 1%",
-         "Тунец в собственном соку", "Арахисовая паста", "Огурцы и помидоры", "Протеиновый батончик", "Сыр сулугуни"}
+QUICK = {
+    "Греческий йогурт",
+    "Творог 5%",
+    "Банан",
+    "Яблоко",
+    "Миндаль",
+    "Авокадо",
+    "Кефир 1%",
+    "Тунец в собственном соку",
+    "Арахисовая паста",
+    "Огурцы и помидоры",
+    "Протеиновый батончик",
+    "Сыр сулугуни",
+}
 
 
 def suggest(rem, mode="", seed=0):
@@ -707,29 +853,39 @@ def suggest(rem, mode="", seed=0):
         if g < 20:
             continue
         m = {"kcal": k * g / 100, "p": p * g / 100, "f": f * g / 100, "c": c * g / 100}
-        gain = (6 if mode == "protein" else 3) * min(m["p"], max(rem["p"], 0)) + min(m["f"], max(rem["f"], 0)) + min(m["c"], max(rem["c"], 0))
-        over = 3 * max(m["p"] - rem["p"], 0) + 3 * max(m["f"] - rem["f"], 0) + 2 * max(m["c"] - rem["c"], 0)
-        out.append((gain - over + (rnd.random() * 5 if seed else 0),
-                    {"name": name, "grams": g, **{x: round(v, 1) for x, v in m.items()}}))
+        gain = (
+            (6 if mode == "protein" else 3) * min(m["p"], max(rem["p"], 0))
+            + min(m["f"], max(rem["f"], 0))
+            + min(m["c"], max(rem["c"], 0))
+        )
+        over = (
+            3 * max(m["p"] - rem["p"], 0)
+            + 3 * max(m["f"] - rem["f"], 0)
+            + 2 * max(m["c"] - rem["c"], 0)
+        )
+        out.append((
+            gain - over + (rnd.random() * 5 if seed else 0),
+            {"name": name, "grams": g, **{x: round(v, 1) for x, v in m.items()}},
+        ))
     out.sort(key=lambda t: -t[0])
     return [o for sc, o in out[:6] if sc > 0]
 
 
 PROMPT_FOOD = (
-    'Ты опытный нутрициолог. Определи блюда/продукты (или прочитай таблицу пищевой ценности на этикетке/упаковке, если на фото этикетка). '
-    'Оцени вес порции и КБЖУ. Отвечай ТОЛЬКО валидным JSON без markdown: '
+    "Ты опытный нутрициолог. Определи блюда/продукты (или прочитай таблицу пищевой ценности на этикетке/упаковке, если на фото этикетка). "
+    "Оцени вес порции и КБЖУ. Отвечай ТОЛЬКО валидным JSON без markdown: "
     '{"items":[{"name":"название","grams":число,"kcal":число,"p":число,"f":число,"c":число}]}. '
-    'Значения — на всю съеденную порцию (или указанную в комментарии порцию), p/f/c в граммах. '
+    "Значения — на всю съеденную порцию (или указанную в комментарии порцию), p/f/c в граммах. "
     'Если еды или данных нет — {"items":[]}. Названия по-русски.'
 )
 
 PROMPT_MEALPLAN = (
-    'Ты персональный нутрициолог в стиле лучших приложений (Yazio, FatSecret, Lifesum). '
-    'Составь вкусный, реалистичный и сбалансированный план питания из простых понятных продуктов с точными граммовками '
-    'строго под целевые КБЖУ и пожелания пользователя (количество сладкого, продукты в холодильнике, исключения). '
-    'Отвечай ТОЛЬКО валидным JSON без markdown: '
+    "Ты персональный нутрициолог в стиле лучших приложений (Yazio, FatSecret, Lifesum). "
+    "Составь вкусный, реалистичный и сбалансированный план питания из простых понятных продуктов с точными граммовками "
+    "строго под целевые КБЖУ и пожелания пользователя (количество сладкого, продукты в холодильнике, исключения). "
+    "Отвечай ТОЛЬКО валидным JSON без markdown: "
     '{"meals":[{"meal":"breakfast|lunch|dinner|snack","title":"Приём пищи","items":[{"name":"продукт/блюдо","grams":число,"kcal":число,"p":число,"f":число,"c":число}]}],"tip":"короткий совет на 1 предложение"}. '
-    'Названия по-русски.'
+    "Названия по-русски."
 )
 
 
@@ -755,93 +911,6 @@ class Item(BaseModel):
             k = min(5000.0, self.p * 4.0 + self.f * 9.0 + self.c * 4.0)
         self.kcal = round(k, 1)
         return self
-
-
-_ALL_SECRETS = tuple(
-    s for s in (
-        BOT_TOKEN,
-        DATABASE_URL,
-        AI_KEY,
-        GROQ_API_KEY,
-        FREE_FALLBACK_API_KEY,
-        FREE_FALLBACK_2_API_KEY,
-        FREE_FALLBACK_3_API_KEY,
-        FREE_FALLBACK_4_API_KEY,
-        FREE_FALLBACK_5_API_KEY,
-        FREE_FALLBACK_6_API_KEY,
-        FREE_FALLBACK_7_API_KEY,
-        FREE_FALLBACK_8_API_KEY,
-        PROXYAPI_API_KEY,
-        OPENAI_API_KEY,
-        YOOKASSA_SECRET_KEY,
-    ) if s
-)
-
-CHANNEL_ID = (os.getenv("CHANNEL_ID") or "").strip()
-BACKUP_DIR = (os.getenv("BACKUP_DIR") or "/tmp/snapeat_backups").strip()
-BACKUP_INTERVAL_HOURS = max(1, int(os.getenv("BACKUP_INTERVAL_HOURS", "24")))
-FLOOD_WINDOW_SEC = max(1, int(os.getenv("FLOOD_WINDOW_SEC", "3")))
-FLOOD_MAX_HITS = max(2, int(os.getenv("FLOOD_MAX_HITS", "6")))
-
-_ai_health_lock = threading.Lock()
-_ai_last_success: dict | None = None
-_ai_last_error: dict | None = None
-_ai_provider_stats: dict[str, dict] = {}
-_user_flood_hits: dict[int, list[float]] = {}
-_last_health_alert_ts: float = 0.0
-_last_backup_ts: float = 0.0
-_broadcast_jobs: dict[str, dict] = {}
-
-
-def _record_ai_success(provider_label: str, model_name: str, mode: str = "text"):
-    now_ts = int(time.time())
-    key = f"{provider_label} ({model_name})"
-    with _ai_health_lock:
-        st = _ai_provider_stats.setdefault(key, {"ok": 0, "err": 0, "last_ok": 0, "last_err": 0, "last_err_msg": ""})
-        st["ok"] += 1
-        st["last_ok"] = now_ts
-        global _ai_last_success
-        _ai_last_success = {"provider": provider_label, "model": model_name, "mode": mode, "ts": now_ts}
-
-
-def _record_ai_error(provider_label: str, model_name: str, err_msg: str, mode: str = "text"):
-    now_ts = int(time.time())
-    clean_msg = _err(err_msg)
-    key = f"{provider_label} ({model_name})"
-    with _ai_health_lock:
-        st = _ai_provider_stats.setdefault(key, {"ok": 0, "err": 0, "last_ok": 0, "last_err": 0, "last_err_msg": ""})
-        st["err"] += 1
-        st["last_err"] = now_ts
-        st["last_err_msg"] = clean_msg
-        global _ai_last_error
-        _ai_last_error = {"provider": provider_label, "model": model_name, "mode": mode, "error": clean_msg, "ts": now_ts}
-
-
-def check_flood(uid: int, bucket: str = "ai") -> bool:
-    if not uid or uid in ADMIN_IDS:
-        return True
-    now = time.monotonic()
-    k = uid * 10 + (1 if bucket == "support" else 0)
-    with _ai_health_lock:
-        arr = [t for t in _user_flood_hits.get(k, []) if now - t <= FLOOD_WINDOW_SEC]
-        if len(arr) >= FLOOD_MAX_HITS:
-            _user_flood_hits[k] = arr
-            return False
-        arr.append(now)
-        _user_flood_hits[k] = arr
-        return True
-
-
-
-def _err(msg) -> str:
-    msg = " ".join(str(msg).split())
-    for secret in _ALL_SECRETS:
-        msg = msg.replace(secret, "***")
-    return msg[:240]
-
-
-IMG_MIME = {"image/jpeg", "image/png", "image/webp", "image/gif"}
-MAX_IMAGE_BYTES = 3_000_000
 
 
 def split_image(image: str):
@@ -879,8 +948,7 @@ def _num_from_val(val, default: float = 0.0) -> float:
         return default
     if isinstance(val, (int, float)):
         return float(val)
-    s = str(val).strip().replace(",", ".")
-    s = re.sub(r"[^0-9.\-+]", "", s)
+    s = re.sub(r"[^0-9.\-+]", "", str(val).strip().replace(",", "."))
     if not s or s in (".", "-", "+"):
         return default
     try:
@@ -893,9 +961,7 @@ def _repair_json_text(text: str) -> str:
     s = (text or "").strip()
     s = re.sub(r"```(?:json)?", "", s, flags=re.I).replace("```", "").strip()
     s = s.replace("\u201c", '"').replace("\u201d", '"').replace("\u2019", "'")
-    # Remove trailing commas before } or ]
-    s = re.sub(r",\s*([}\]])", r"\1", s)
-    return s
+    return re.sub(r",\s*([}\]])", r"\1", s)
 
 
 def _extract_json_obj(raw: str) -> dict:
@@ -917,7 +983,6 @@ def _extract_json_obj(raw: str) -> dict:
             if isinstance(parsed, list):
                 return {"items": parsed}
         except Exception:
-            # Try closing truncated JSON brackets/braces if model cut off output
             open_braces = cand.count("{") - cand.count("}")
             open_brackets = cand.count("[") - cand.count("]")
             if open_braces >= 0 and open_brackets >= 0:
@@ -931,10 +996,8 @@ def _extract_json_obj(raw: str) -> dict:
                 except Exception:
                     pass
 
-    # Fallback: extract JSON-like item objects inside text if wrapper broke
-    obj_matches = re.findall(r"\{[^{}]*\}", cleaned)
     collected = []
-    for m_txt in obj_matches:
+    for m_txt in re.findall(r"\{[^{}]*\}", cleaned):
         try:
             d = json.loads(_repair_json_text(m_txt))
             if isinstance(d, dict) and ("name" in d or "title" in d or "kcal" in d):
@@ -962,19 +1025,15 @@ def _normalize_ai_item(raw_item: dict, fallback_name: str = "") -> dict | None:
     if not name:
         return None
 
-    grams = _num_from_val(raw_item.get("grams") if "grams" in raw_item else raw_item.get("weight_g"), 100.0)
-    if grams <= 0:
-        grams = 100.0
-    grams = min(5000.0, max(1.0, grams))
+    grams = _num_from_val(
+        raw_item.get("grams") if "grams" in raw_item else raw_item.get("weight_g"), 100.0
+    )
+    grams = min(5000.0, max(1.0, grams if grams > 0 else 100.0))
 
-    p = _num_from_val(raw_item.get("p") if "p" in raw_item else raw_item.get("protein"), 0.0)
-    f = _num_from_val(raw_item.get("f") if "f" in raw_item else raw_item.get("fat"), 0.0)
-    c = _num_from_val(raw_item.get("c") if "c" in raw_item else raw_item.get("carbs"), 0.0)
+    p = min(500.0, max(0.0, _num_from_val(raw_item.get("p") if "p" in raw_item else raw_item.get("protein"), 0.0)))
+    f = min(500.0, max(0.0, _num_from_val(raw_item.get("f") if "f" in raw_item else raw_item.get("fat"), 0.0)))
+    c = min(1000.0, max(0.0, _num_from_val(raw_item.get("c") if "c" in raw_item else raw_item.get("carbs"), 0.0)))
     kcal = _num_from_val(raw_item.get("kcal") if "kcal" in raw_item else raw_item.get("calories"), 0.0)
-
-    p = min(500.0, max(0.0, p))
-    f = min(500.0, max(0.0, f))
-    c = min(1000.0, max(0.0, c))
     if kcal <= 0 and (p > 0 or f > 0 or c > 0):
         kcal = p * 4.0 + f * 9.0 + c * 4.0
     kcal = min(5000.0, max(0.0, kcal))
@@ -991,6 +1050,20 @@ def _model_candidates() -> list[str]:
     return out
 
 
+def _normalize_chat_completions_url(url: str) -> str:
+    clean_url = (url or "").strip().strip('"').strip("'")
+    if clean_url and not clean_url.startswith(("http://", "https://")):
+        clean_url = "https://" + clean_url.lstrip("/")
+    if not clean_url:
+        return ""
+    clean_url = clean_url.rstrip("/")
+    if not clean_url.endswith("/chat/completions") and (
+        clean_url.endswith(("/v1", "/openai/v1")) or "/api/v1" in clean_url
+    ):
+        clean_url += "/chat/completions"
+    return clean_url
+
+
 async def _call_openai_compatible(
     url: str,
     api_key: str,
@@ -1001,19 +1074,12 @@ async def _call_openai_compatible(
     temp: float = 0.2,
     use_json_format: bool = True,
 ) -> str:
-    if not api_key:
-        raise RuntimeError(f"{provider_name}: ключ не задан")
-    clean_url = (url or "").strip().strip('"').strip("'")
-    if clean_url and not clean_url.startswith(("http://", "https://")):
-        clean_url = "https://" + clean_url.lstrip("/")
+    clean_url = _normalize_chat_completions_url(url)
     if not clean_url:
         raise RuntimeError(f"{provider_name}: некорректный URL")
-    clean_url = clean_url.rstrip("/")
-    if not clean_url.endswith("/chat/completions"):
-        if clean_url.endswith("/v1") or clean_url.endswith("/openai/v1"):
-            clean_url = clean_url + "/chat/completions"
-        elif "/api/v1" in clean_url and not clean_url.endswith("/chat/completions"):
-            clean_url = clean_url + "/chat/completions"
+    is_relay = bool(AI_RELAY_URL) and clean_url == _normalize_chat_completions_url(AI_RELAY_URL)
+    if not api_key and not is_relay:
+        raise RuntimeError(f"{provider_name}: ключ не задан")
 
     has_image = any("inline_data" in p for p in parts)
     content = []
@@ -1025,7 +1091,7 @@ async def _call_openai_compatible(
             b64 = p["inline_data"]["data"]
             content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
 
-    payload = {
+    payload: dict = {
         "model": model,
         "temperature": temp,
         "messages": [
@@ -1036,10 +1102,12 @@ async def _call_openai_compatible(
     if use_json_format and not has_image:
         payload["response_format"] = {"type": "json_object"}
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        if is_relay and AI_RELAY_HEADER:
+            headers[AI_RELAY_HEADER] = api_key
+        else:
+            headers["Authorization"] = f"Bearer {api_key}"
     if "openrouter.ai" in clean_url:
         headers["HTTP-Referer"] = BASE_URL or "https://snapeat.app"
         headers["X-Title"] = "SnapEat"
@@ -1058,27 +1126,36 @@ async def _call_openai_compatible(
                 continue
             if r.status_code >= 400:
                 err_snippet = _err(r.text[:240])
-                await adb_log("WARNING", "ai_oai_http_err", f"{provider_name} {r.status_code} ({'vision' if has_image else 'text'}): {err_snippet}")
+                await adb_log(
+                    "WARNING",
+                    "ai_oai_http_err",
+                    f"{provider_name} {r.status_code} ({'vision' if has_image else 'text'}): {err_snippet}",
+                )
                 raise RuntimeError(f"{provider_name} {r.status_code}: {err_snippet}")
+
             data = r.json()
             msg_obj = ((data.get("choices") or [{}])[0].get("message") or {})
             raw_content = msg_obj.get("content")
             if isinstance(raw_content, list):
-                txt = "".join(
-                    seg.get("text", "") for seg in raw_content if isinstance(seg, dict)
-                ).strip()
+                txt = "".join(seg.get("text", "") for seg in raw_content if isinstance(seg, dict)).strip()
             else:
                 txt = (raw_content or "").strip()
             if not txt:
-                reasoning_txt = (msg_obj.get("reasoning_content") or msg_obj.get("reasoning") or "").strip()
-                if reasoning_txt:
-                    txt = reasoning_txt
-                else:
-                    raise RuntimeError(f"{provider_name} вернул пустой ответ")
+                txt = (msg_obj.get("reasoning_content") or msg_obj.get("reasoning") or "").strip()
+            if not txt:
+                raise RuntimeError(f"{provider_name} вернул пустой ответ")
             _extract_json_obj(txt)
             _record_ai_success(provider_name, model, "vision" if has_image else "text")
             return txt
+
     raise RuntimeError(f"{provider_name}: исчерпаны попытки")
+
+
+def _relay_targets() -> list[tuple[str, str, str, str]]:
+    if not AI_RELAY_URL:
+        return []
+    models = AI_RELAY_MODELS or ["gpt-4o-mini"]
+    return [("AI Relay", RELAY_SECRET, AI_RELAY_URL, m) for m in models]
 
 
 def _proxyapi_targets() -> list[tuple[str, str, str, str]]:
@@ -1088,23 +1165,13 @@ def _proxyapi_targets() -> list[tuple[str, str, str, str]]:
 
 
 def _free_fallback_targets() -> list[tuple[str, str, str, str]]:
-    slots = [
-        ("Бесплатный резерв 1", FREE_FALLBACK_API_KEY, FREE_FALLBACK_BASE_URL, FREE_FALLBACK_MODELS),
-        ("Бесплатный резерв 2", FREE_FALLBACK_2_API_KEY, FREE_FALLBACK_2_BASE_URL, FREE_FALLBACK_2_MODELS),
-        ("Бесплатный резерв 3", FREE_FALLBACK_3_API_KEY, FREE_FALLBACK_3_BASE_URL, FREE_FALLBACK_3_MODELS),
-        ("Бесплатный резерв 4", FREE_FALLBACK_4_API_KEY, FREE_FALLBACK_4_BASE_URL, FREE_FALLBACK_4_MODELS),
-        ("Бесплатный резерв 5", FREE_FALLBACK_5_API_KEY, FREE_FALLBACK_5_BASE_URL, FREE_FALLBACK_5_MODELS),
-        ("Бесплатный резерв 6", FREE_FALLBACK_6_API_KEY, FREE_FALLBACK_6_BASE_URL, FREE_FALLBACK_6_MODELS),
-        ("Бесплатный резерв 7", FREE_FALLBACK_7_API_KEY, FREE_FALLBACK_7_BASE_URL, FREE_FALLBACK_7_MODELS),
-        ("Бесплатный резерв 8", FREE_FALLBACK_8_API_KEY, FREE_FALLBACK_8_BASE_URL, FREE_FALLBACK_8_MODELS),
-    ]
-    targets = []
+    targets: list[tuple[str, str, str, str]] = []
+    targets.extend(_relay_targets())
     if PROXYAPI_PRIORITY:
         targets.extend(_proxyapi_targets())
-    for label, key, url, models in slots:
-        if key and url and models:
-            for m in models:
-                targets.append((label, key, url, m))
+    for label, key, url, models in FREE_SLOTS:
+        for m in models:
+            targets.append((label, key, url, m))
     if GROQ_API_KEY and GROQ_BASE_URL and GROQ_MODELS:
         for m in GROQ_MODELS:
             targets.append(("Groq", GROQ_API_KEY, GROQ_BASE_URL, m))
@@ -1129,7 +1196,7 @@ async def _call_free_fallback(system_prompt: str, parts: list, temp: float = 0.2
                 system_prompt,
                 parts,
                 temp=temp,
-                use_json_format=("openrouter.ai" not in url),
+                use_json_format=("openrouter.ai" not in url and label != "AI Relay"),
             )
         except Exception as e:
             errs.append(f"{label}/{model}: {_err(e)}")
@@ -1150,35 +1217,40 @@ async def _call_openai_fallback(system_prompt: str, parts: list, temp: float = 0
     )
 
 
-async def _call_gemini_raw(system_prompt: str, parts: list, schema: dict, temp: float = 0.2, timeout_sec: float = 45.0) -> str:
+async def _call_gemini_raw(
+    system_prompt: str, parts: list, schema: dict, temp: float = 0.2, timeout_sec: float = 45.0
+) -> str:
     proxy_targets = _proxyapi_targets() if PROXYAPI_PRIORITY else []
+    has_relay = bool(_relay_targets())
     has_free = bool(_free_fallback_targets())
-    has_any_fallback = has_free or bool(OPENAI_API_KEY) or bool(proxy_targets)
+    has_any_fallback = has_free or bool(OPENAI_API_KEY) or bool(proxy_targets) or has_relay
     if not AI_KEY and not has_any_fallback:
-        raise HTTPException(503, "ИИ не настроен: задайте PROXYAPI_API_KEY, GEMINI_API_KEY, бесплатный резерв или OPENAI_API_KEY")
+        raise HTTPException(
+            503,
+            "ИИ не настроен: задайте AI_RELAY_URL, PROXYAPI_API_KEY, GEMINI_API_KEY, бесплатный резерв или OPENAI_API_KEY",
+        )
 
     primary_err = None
     last_err = "ИИ временно перегружен, попробуйте через минуту"
 
-    if proxy_targets:
-        for _lbl, p_key, p_url, p_mod in proxy_targets:
-            try:
-                return await _call_openai_compatible(
-                    p_url,
-                    p_key,
-                    p_mod,
-                    f"ProxyAPI ({p_mod})",
-                    system_prompt,
-                    parts,
-                    temp=temp,
-                    use_json_format=False,
-                )
-            except Exception as pe:
-                err_txt = f"ProxyAPI/{p_mod}: {_err(pe)}"
-                if not primary_err:
-                    primary_err = err_txt
-                last_err = err_txt
-                log.warning("Priority ProxyAPI failed (%s): %s", p_mod, _err(pe))
+    for _lbl, p_key, p_url, p_mod in proxy_targets:
+        try:
+            return await _call_openai_compatible(
+                p_url,
+                p_key,
+                p_mod,
+                f"ProxyAPI ({p_mod})",
+                system_prompt,
+                parts,
+                temp=temp,
+                use_json_format=False,
+            )
+        except Exception as pe:
+            err_txt = f"ProxyAPI/{p_mod}: {_err(pe)}"
+            if not primary_err:
+                primary_err = err_txt
+            last_err = err_txt
+            log.warning("Priority ProxyAPI failed (%s): %s", p_mod, _err(pe))
 
     body = {
         "system_instruction": {"parts": [{"text": system_prompt}]},
@@ -1192,6 +1264,7 @@ async def _call_gemini_raw(system_prompt: str, parts: list, schema: dict, temp: 
     }
     modes = ["bearer", "query"] if AI_KEY.startswith("AQ.") else ["query"]
     models = _model_candidates() if AI_KEY else []
+
     async with _ai_sem:
         if models:
             async with httpx.AsyncClient(timeout=timeout_sec) as cl:
@@ -1272,8 +1345,8 @@ async def _call_gemini_raw(system_prompt: str, parts: list, schema: dict, temp: 
                             if not raw.strip():
                                 raise ValueError("empty text")
                             _extract_json_obj(raw)
-                            _has_img = any("inline_data" in p for p in parts)
-                            _record_ai_success("Gemini", model, "vision" if _has_img else "text")
+                            has_img = any("inline_data" in p for p in parts)
+                            _record_ai_success("Gemini", model, "vision" if has_img else "text")
                             return raw
                         except Exception as e:
                             err_txt = f"Gemini ответ ({model}): {_err(e)}"
@@ -1298,14 +1371,10 @@ async def _call_gemini_raw(system_prompt: str, parts: list, schema: dict, temp: 
                 log.error("OpenAI fallback failed: %s", _err(oe))
                 last_err = f"{last_err} | OpenAI резерв: {_err(oe)}"
 
-    _has_img = any("inline_data" in p for p in parts)
-    _record_ai_error("AI Chain", AI_MODEL, primary_err or last_err, "vision" if _has_img else "text")
+    has_img = any("inline_data" in p for p in parts)
+    _record_ai_error("AI Chain", AI_MODEL, primary_err or last_err, "vision" if has_img else "text")
     await adb_log("ERROR", "ai_all_failed", primary_err or last_err)
     raise HTTPException(502, "ИИ временно недоступен. Попробуйте через пару минут или добавьте блюдо вручную.")
-
-
-_inflight_ai: dict[str, asyncio.Future] = {}
-_inflight_lock = threading.Lock()
 
 
 async def _run_singleflight(key: str, coro_factory):
@@ -1335,7 +1404,6 @@ async def _run_singleflight(key: str, coro_factory):
         with _inflight_lock:
             if _inflight_ai.get(key) is existing_fut:
                 _inflight_ai.pop(key, None)
-
 
 
 _LOCAL_FOOD_DB = [
@@ -1394,7 +1462,11 @@ def _local_food_fallback(text: str) -> list[dict]:
         if grams_override and 5 <= grams_override <= 5000:
             g = grams_override
         elif pcs_count and pcs_count > 0:
-            unit_g = 55.0 if "яйц" in kw else (120.0 if "банан" in kw else (180.0 if "яблок" in kw else entry["default_g"]))
+            unit_g = (
+                55.0
+                if "яйц" in kw
+                else (120.0 if "банан" in kw else (180.0 if "яблок" in kw else entry["default_g"]))
+            )
             g = min(5000.0, unit_g * pcs_count)
         else:
             g = float(entry["default_g"])
@@ -1410,24 +1482,24 @@ def _local_food_fallback(text: str) -> list[dict]:
             ).model_dump()
         ]
 
-    # Split total weight across detected ingredients for compound dishes like "тушенная картошка с курицей 300 г"
-    total_g = grams_override if (grams_override and 10 <= grams_override <= 5000) else sum(float(e["default_g"]) for e, _ in matched[:3])
+    total_g = (
+        grams_override
+        if (grams_override and 10 <= grams_override <= 5000)
+        else sum(float(e["default_g"]) for e, _ in matched[:3])
+    )
     top_pairs = matched[:3]
     per_g = round(total_g / len(top_pairs), 1)
-    out_items = []
-    for entry, _kw in top_pairs:
-        ratio = per_g / 100.0
-        out_items.append(
-            Item(
-                name=entry["name"],
-                grams=per_g,
-                kcal=entry["kcal_100"] * ratio,
-                p=entry["p_100"] * ratio,
-                f=entry["f_100"] * ratio,
-                c=entry["c_100"] * ratio,
-            ).model_dump()
-        )
-    return out_items
+    return [
+        Item(
+            name=entry["name"],
+            grams=per_g,
+            kcal=entry["kcal_100"] * (per_g / 100.0),
+            p=entry["p_100"] * (per_g / 100.0),
+            f=entry["f_100"] * (per_g / 100.0),
+            c=entry["c_100"] * (per_g / 100.0),
+        ).model_dump()
+        for entry, _kw in top_pairs
+    ]
 
 
 async def ask_ai(text: str, image: str, label_mode: bool = False):
@@ -1446,7 +1518,8 @@ async def ask_ai(text: str, image: str, label_mode: bool = False):
             parts.append({"inline_data": {"mime_type": mime, "data": b64}})
         default_prompt = (
             "Прочитай этикетку/таблицу КБЖУ на упаковке и пересчитай на указанную порцию (если вес не указан — на 100 г)."
-            if label_mode else "Что на фото? Оцени порцию и КБЖУ."
+            if label_mode
+            else "Что на фото? Оцени порцию и КБЖУ."
         )
         parts.append({"text": text.strip() or default_prompt})
 
@@ -1479,7 +1552,7 @@ async def ask_ai(text: str, image: str, label_mode: bool = False):
                 try:
                     if _free_fallback_targets():
                         raw = await _call_free_fallback(PROMPT_FOOD, parts, temp=0.2)
-                    elif OPENAI_API_KEY:
+                    else:
                         raw = await _call_openai_fallback(PROMPT_FOOD, parts, temp=0.2)
                 except Exception as ve:
                     await adb_log("ERROR", "ai_vision_fallback_err", _err(ve))
@@ -1491,6 +1564,7 @@ async def ask_ai(text: str, image: str, label_mode: bool = False):
                     _cache_set(cache_key, local_items)
                     return local_items
                 raise
+
         try:
             obj = _extract_json_obj(raw)
             raw_items = obj.get("items")
@@ -1499,7 +1573,8 @@ async def ask_ai(text: str, image: str, label_mode: bool = False):
             parsed = []
             if isinstance(raw_items, list):
                 for idx_i, raw_i in enumerate(raw_items[:15]):
-                    norm_i = _normalize_ai_item(raw_i, fallback_name=text.strip()[:80] if len(raw_items) == 1 else f"Блюдо {idx_i + 1}")
+                    fallback_n = text.strip()[:80] if len(raw_items) == 1 else f"Блюдо {idx_i + 1}"
+                    norm_i = _normalize_ai_item(raw_i, fallback_name=fallback_n)
                     if norm_i:
                         parsed.append(norm_i)
             if not parsed and not prepared_img:
@@ -1611,8 +1686,7 @@ async def ask_mealplan_ai(rem: dict, prefs: str = "", user_ctx: dict | None = No
 
 
 async def ask_ai_norms_adjustment(profile_dict: dict, base_norms: dict) -> dict | None:
-    has_ai = bool(AI_KEY or _free_fallback_targets() or OPENAI_API_KEY)
-    if not has_ai:
+    if not (AI_KEY or _relay_targets() or _free_fallback_targets() or OPENAI_API_KEY):
         return None
     cache_key = "norms:" + hashlib.sha256(
         json.dumps({"p": profile_dict, "n": base_norms}, sort_keys=True, ensure_ascii=False).encode()
@@ -1734,15 +1808,9 @@ def consume_ai_quota(uid: int) -> tuple[str, str]:
                 return "", ""
 
             is_pro = (row.get("pro_until") or 0) > now_ts
-            t_month = row.get("trial_month") or ""
-            t_used = (row.get("trial_used") or 0) if t_month == cur_month else 0
-
-            a_day = row.get("ai_day") or ""
-            a_n = (row.get("ai_n") or 0) if a_day == today_str else 0
-
-            p_month = row.get("pro_month") or ""
-            p_used = (row.get("pro_month_used") or 0) if p_month == cur_month else 0
-
+            t_used = (row.get("trial_used") or 0) if (row.get("trial_month") or "") == cur_month else 0
+            a_n = (row.get("ai_n") or 0) if (row.get("ai_day") or "") == today_str else 0
+            p_used = (row.get("pro_month_used") or 0) if (row.get("pro_month") or "") == cur_month else 0
             extra = int(row.get("extra_ai_credits") or 0)
 
             if is_pro and a_n < PRO_LIMIT and p_used < PRO_MONTHLY_REQUEST_CAP:
@@ -1778,29 +1846,24 @@ def refund_ai_quota(uid: int, source: str, period_month: str):
 
     def _op(conn):
         with conn.cursor() as cur:
-            if source == "pro":
+            if source in ("pro", "trial"):
                 cur.execute(
                     _pg_sql("UPDATE users SET ai_n=GREATEST(COALESCE(ai_n,0)-1,0) WHERE id=? AND ai_day=?"),
                     (uid, today_str),
                 )
                 if period_month:
+                    col = "pro_month_used" if source == "pro" else "trial_used"
+                    month_col = "pro_month" if source == "pro" else "trial_month"
                     cur.execute(
-                        _pg_sql("UPDATE users SET pro_month_used=GREATEST(COALESCE(pro_month_used,0)-1,0) WHERE id=? AND pro_month=?"),
-                        (uid, period_month),
-                    )
-            elif source == "trial":
-                cur.execute(
-                    _pg_sql("UPDATE users SET ai_n=GREATEST(COALESCE(ai_n,0)-1,0) WHERE id=? AND ai_day=?"),
-                    (uid, today_str),
-                )
-                if period_month:
-                    cur.execute(
-                        _pg_sql("UPDATE users SET trial_used=GREATEST(COALESCE(trial_used,0)-1,0) WHERE id=? AND trial_month=?"),
+                        _pg_sql(f"UPDATE users SET {col}=GREATEST(COALESCE({col},0)-1,0) WHERE id=? AND {month_col}=?"),
                         (uid, period_month),
                     )
             elif source == "extra":
                 cur.execute(
-                    _pg_sql("UPDATE users SET extra_ai_credits=COALESCE(extra_ai_credits,0)+1, ai_n=GREATEST(COALESCE(ai_n,0)-1,0) WHERE id=?"),
+                    _pg_sql(
+                        "UPDATE users SET extra_ai_credits=COALESCE(extra_ai_credits,0)+1, "
+                        "ai_n=GREATEST(COALESCE(ai_n,0)-1,0) WHERE id=?"
+                    ),
                     (uid,),
                 )
 
@@ -1813,17 +1876,13 @@ def consume_mealplan_quota(uid: int) -> str:
     def _op(conn):
         with conn.cursor() as cur:
             cur.execute(
-                _pg_sql(
-                    "SELECT pro_until, mealplan_credits, free_mealplan_used "
-                    "FROM users WHERE id=? FOR UPDATE"
-                ),
+                _pg_sql("SELECT pro_until, mealplan_credits, free_mealplan_used FROM users WHERE id=? FOR UPDATE"),
                 (uid,),
             )
             row = cur.fetchone()
             if not row:
                 return ""
-            is_pro = (row.get("pro_until") or 0) > now_ts
-            if is_pro:
+            if (row.get("pro_until") or 0) > now_ts:
                 return "pro"
             free_used = int(row.get("free_mealplan_used") or 0)
             if free_used < FREE_MEALPLAN_LIMIT:
@@ -1857,52 +1916,36 @@ def refund_mealplan_quota(uid: int, source: str):
         )
 
 
-
-
 async def transcribe_voice_audio(audio_bytes: bytes, mime_type: str = "audio/ogg") -> str:
     if not audio_bytes:
         raise RuntimeError("Пустое голосовое сообщение")
-    if GROQ_API_KEY:
-        try:
-            async with httpx.AsyncClient(timeout=35) as cl:
-                r = await cl.post(
-                    "https://api.groq.com/openai/v1/audio/transcriptions",
-                    headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
-                    files={"file": ("voice.ogg", audio_bytes, mime_type)},
-                    data={"model": "whisper-large-v3-turbo", "language": "ru"},
-                )
-            if r.status_code == 200:
-                txt = (r.json().get("text") or "").strip()
-                if txt:
-                    return txt
-        except Exception as e:
-            log.warning("Groq whisper transcription failed: %s", _err(e))
 
-    if OPENAI_API_KEY:
+    for api_key, url, model, label in (
+        (GROQ_API_KEY, "https://api.groq.com/openai/v1/audio/transcriptions", "whisper-large-v3-turbo", "Groq"),
+        (OPENAI_API_KEY, "https://api.openai.com/v1/audio/transcriptions", "gpt-4o-mini-transcribe", "OpenAI"),
+    ):
+        if not api_key:
+            continue
         try:
             async with httpx.AsyncClient(timeout=35) as cl:
                 r = await cl.post(
-                    "https://api.openai.com/v1/audio/transcriptions",
-                    headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+                    url,
+                    headers={"Authorization": f"Bearer {api_key}"},
                     files={"file": ("voice.ogg", audio_bytes, mime_type)},
-                    data={"model": "gpt-4o-mini-transcribe", "language": "ru"},
+                    data={"model": model, "language": "ru"},
                 )
             if r.status_code == 200:
                 txt = (r.json().get("text") or "").strip()
                 if txt:
                     return txt
         except Exception as e:
-            log.warning("OpenAI whisper transcription failed: %s", _err(e))
+            log.warning("%s whisper transcription failed: %s", label, _err(e))
 
     if AI_KEY:
         b64 = base64.b64encode(audio_bytes).decode()
-        schema = {
-            "type": "OBJECT",
-            "required": ["transcript"],
-            "properties": {"transcript": {"type": "STRING"}},
-        }
+        schema = {"type": "OBJECT", "required": ["transcript"], "properties": {"transcript": {"type": "STRING"}}}
         raw = await _call_gemini_raw(
-            "Распознай русскую речь с описанием еды или порций. Отвечай ТОЛЬКО JSON {\"transcript\":\"...\"}.",
+            'Распознай русскую речь с описанием еды или порций. Отвечай ТОЛЬКО JSON {"transcript":"..."}.',
             [
                 {"inline_data": {"mime_type": mime_type, "data": b64}},
                 {"text": "Транскрибируй голосовое сообщение дословно на русском языке."},
@@ -1911,15 +1954,12 @@ async def transcribe_voice_audio(audio_bytes: bytes, mime_type: str = "audio/ogg
             temp=0.1,
             timeout_sec=25.0,
         )
-        obj = _extract_json_obj(raw)
-        tr = (obj.get("transcript") or "").strip()
+        tr = (_extract_json_obj(raw).get("transcript") or "").strip()
         if tr:
             return tr
 
     raise RuntimeError("Распознавание голоса недоступно")
 
-
-_pending_chat_food: dict[str, dict] = {}
 
 def _prune_pending_chat_food(now_ts: float | None = None):
     now_v = time.time() if now_ts is None else now_ts
@@ -1932,17 +1972,6 @@ def _prune_pending_chat_food(now_ts: float | None = None):
             _pending_chat_food.pop(k, None)
 
 
-async def _check_user_in_channel(uid: int) -> bool:
-    if not CHANNEL_ID:
-        return False
-    try:
-        member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=uid)
-        status_val = getattr(member, "status", "")
-        return status_val in ("creator", "administrator", "member", "restricted")
-    except Exception:
-        return False
-
-
 def _guess_meal_by_hour(hour: int) -> str:
     if 5 <= hour < 11:
         return "breakfast"
@@ -1952,88 +1981,84 @@ def _guess_meal_by_hour(hour: int) -> str:
         return "dinner"
     return "snack"
 
-bot = Bot(BOT_TOKEN)
-dp = Dispatcher()
 
-
-@dp.message(CommandStart())
-async def on_start(m: Message):
-    ref_id = None
-    parts = (m.text or "").split(maxsplit=1)
-    if len(parts) > 1 and parts[1].startswith("ref_"):
-        try:
-            ref_id = int(parts[1][4:])
-        except ValueError:
-            pass
-    await asyncio.to_thread(
-        get_user,
-        m.from_user.id,
-        m.from_user.full_name,
-        ref_id,
-        m.from_user.username or "",
-    )
-    rows_kb = []
-    if BASE_URL:
-        rows_kb.append([InlineKeyboardButton(text="🥗 Открыть дневник", web_app=WebAppInfo(url=BASE_URL))])
-        if m.from_user.id in ADMIN_IDS:
-            rows_kb.append([InlineKeyboardButton(text="🛡️ Админ-панель", web_app=WebAppInfo(url=f"{BASE_URL}/admin"))])
-    rows_kb.append([InlineKeyboardButton(text="📢 Канал SnapEat", url=CHANNEL_URL)])
-    rows_kb.append([InlineKeyboardButton(text=f"💬 Поддержка ({SUPPORT_HANDLE})", url=SUPPORT_URL)])
-    kb = InlineKeyboardMarkup(inline_keyboard=rows_kb)
-    is_sub = await _check_user_in_channel(m.from_user.id)
-    if is_sub:
-        await arun("UPDATE users SET channel_subscribed=1 WHERE id=?", (m.from_user.id,))
-    bonus_txt = (
-        "\n🎁 По приглашению друга тебе уже начислено +5 бонусных ИИ-запросов!"
-        if ref_id
-        else ""
-    )
-    chan_line = (
-        ""
-        if is_sub
-        else f'\n📢 Новости и обновления (по желанию): <a href="{CHANNEL_URL}">{CHANNEL_HANDLE}</a>'
-    )
-    await m.answer(
-        f"""Привет! Я <b>SnapEat</b> — умный дневник питания и КБЖУ.
-
-📸 Фотографируй еду или этикетки, пиши текстом, отправляй голос или фото прямо сюда — я посчитаю КБЖУ и предложу добавить в дневник.
-Бесплатный пробный лимит — <b>{FREE_MONTHLY_LIMIT} ИИ-запросов в месяц</b> и <b>{FREE_MEALPLAN_LIMIT} бесплатный рацион</b>.{chan_line}
-💬 Вопросы и оплата: {SUPPORT_HANDLE}{bonus_txt}""",
-        parse_mode="HTML",
-        disable_web_page_preview=True,
-        reply_markup=kb,
+def _yookassa_configured() -> bool:
+    return bool(
+        YOOKASSA_SHOP_ID
+        and YOOKASSA_SECRET_KEY
+        and "REPLACE_WITH_" not in YOOKASSA_SHOP_ID
+        and "REPLACE_WITH_" not in YOOKASSA_SECRET_KEY
+        and YOOKASSA_SHOP_ID != "YOUR_SHOP_ID"
+        and YOOKASSA_SECRET_KEY != "YOUR_SECRET_KEY"
     )
 
 
-@dp.message(Command("admin"))
-async def on_admin_cmd(m: Message):
-    if m.from_user.id not in ADMIN_IDS:
-        return
-    if not BASE_URL:
-        await m.answer("⚠️ WEBAPP_URL не задан в переменных окружения.")
-        return
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🛡️ Открыть админ-панель", web_app=WebAppInfo(url=f"{BASE_URL}/admin"))
-    ]])
-    await m.answer("Панель управления SnapEat:", reply_markup=kb)
+def _find_user_by_target(target: str) -> dict | None:
+    raw = (target or "").strip()
+    if not raw:
+        return None
+    if raw.lstrip("-").isdigit():
+        rows = run("SELECT * FROM users WHERE id=?", (int(raw),))
+        return rows[0] if rows else None
+    clean_un = _normalize_username(raw).lower()
+    if clean_un:
+        rows = run("SELECT * FROM users WHERE LOWER(username)=? LIMIT 1", (clean_un,))
+        if rows:
+            return rows[0]
+    rows = run("SELECT * FROM users WHERE LOWER(name) LIKE ? ORDER BY last_seen DESC LIMIT 1", (f"%{raw.lower()}%",))
+    return rows[0] if rows else None
 
 
-@dp.message(Command("request"))
-async def on_request_cmd(m: Message):
-    parts = (m.text or "").split(maxsplit=1)
-    if len(parts) < 2 or not parts[1].strip():
-        await m.answer("Напишите обращение после команды, например:\n<code>/request Не пришла оплата</code>", parse_mode="HTML")
-        return
-    u = await asyncio.to_thread(get_user, m.from_user.id, m.from_user.full_name, None, m.from_user.username or "")
-    msg_txt = re.sub(r"\s+", " ", parts[1].strip())[:800]
+def _serialize_admin_user(u: dict) -> dict:
     now_ts = int(time.time())
-    await arun(
-        "INSERT INTO support_requests(uid, username, user_name, category, message, status, created_at, updated_at) "
-        "VALUES(?,?,?,?,?,?,?,?)",
-        (u["id"], u.get("username") or "", u.get("name") or "", "bot", msg_txt, "new", now_ts, now_ts),
-    )
-    await adb_log("INFO", "support_request", f"@{u.get('username') or '-'}: {msg_txt[:120]}", u["id"])
-    await m.answer("✅ Ваше обращение отправлено администратору. Мы ответим вам в этом чате!")
+    pro_until = int(u.get("pro_until") or 0)
+    is_pro = pro_until > now_ts
+    cur_month = _current_month_str()
+    today_str = date.today().isoformat()
+    return {
+        "id": int(u["id"]),
+        "username": u.get("username") or "",
+        "name": u.get("name") or "",
+        "is_pro": is_pro,
+        "pro_until": pro_until,
+        "pro_days_left": max(0, round((pro_until - now_ts) / 86400, 1)) if is_pro else 0,
+        "extra_ai_credits": int(u.get("extra_ai_credits") or 0),
+        "mealplan_credits": int(u.get("mealplan_credits") or 0),
+        "trial_used": int(u.get("trial_used") or 0) if (u.get("trial_month") or "") == cur_month else 0,
+        "ai_used_today": int(u.get("ai_n") or 0) if (u.get("ai_day") or "") == today_str else 0,
+        "pro_month_used": int(u.get("pro_month_used") or 0) if (u.get("pro_month") or "") == cur_month else 0,
+        "ref_count": int(u.get("ref_count") or 0),
+        "goal": u.get("goal") or "",
+        "weight": u.get("weight"),
+        "target_weight": u.get("target_weight"),
+        "kcal": u.get("kcal"),
+        "created_at": int(u.get("created_at") or 0),
+        "last_seen": int(u.get("last_seen") or 0),
+    }
+
+
+def norm_day(day):
+    try:
+        return date.fromisoformat(day).isoformat()
+    except Exception:
+        return date.today().isoformat()
+
+
+def day_totals(uid, day):
+    es = run("SELECT * FROM entries WHERE uid=? AND day=? ORDER BY ts", (uid, day))
+    return es, {k: round(sum(e[k] for e in es), 1) for k in ("kcal", "p", "f", "c")}
+
+
+def calc_streak(uid, today):
+    days = {r["day"] for r in run("SELECT DISTINCT day FROM entries WHERE uid=? ORDER BY day DESC LIMIT 400", (uid,))}
+    d = date.fromisoformat(norm_day(today))
+    if d.isoformat() not in days:
+        d -= timedelta(days=1)
+    n = 0
+    while d.isoformat() in days:
+        n += 1
+        d -= timedelta(days=1)
+    return n
 
 
 def parse_payload(payload):
@@ -2044,7 +2069,9 @@ def parse_payload(payload):
         return None, None
 
 
-def credit_payment(uid, item_id, charge_id, stars=0, amount_rub=0.0, provider="stars", status="succeeded", metadata=None) -> bool:
+def credit_payment(
+    uid, item_id, charge_id, stars=0, amount_rub=0.0, provider="stars", status="succeeded", metadata=None
+) -> bool:
     if item_id not in CATALOG:
         return False
     it = CATALOG[item_id]
@@ -2088,6 +2115,89 @@ def credit_payment(uid, item_id, charge_id, stars=0, amount_rub=0.0, provider="s
     return ok
 
 
+bot = Bot(BOT_TOKEN)
+dp = Dispatcher()
+
+
+async def _check_user_in_channel(uid: int) -> bool:
+    if not CHANNEL_ID:
+        return False
+    try:
+        member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=uid)
+        return getattr(member, "status", "") in ("creator", "administrator", "member", "restricted")
+    except Exception:
+        return False
+
+
+@dp.message(CommandStart())
+async def on_start(m: Message):
+    ref_id = None
+    parts = (m.text or "").split(maxsplit=1)
+    if len(parts) > 1 and parts[1].startswith("ref_"):
+        try:
+            ref_id = int(parts[1][4:])
+        except ValueError:
+            pass
+    await asyncio.to_thread(
+        get_user, m.from_user.id, m.from_user.full_name, ref_id, m.from_user.username or ""
+    )
+    rows_kb = []
+    if BASE_URL:
+        rows_kb.append([InlineKeyboardButton(text="🥗 Открыть дневник", web_app=WebAppInfo(url=BASE_URL))])
+        if m.from_user.id in ADMIN_IDS:
+            rows_kb.append([InlineKeyboardButton(text="🛡️ Админ-панель", web_app=WebAppInfo(url=f"{BASE_URL}/admin"))])
+    rows_kb.append([InlineKeyboardButton(text="📢 Канал SnapEat", url=CHANNEL_URL)])
+    rows_kb.append([InlineKeyboardButton(text=f"💬 Поддержка ({SUPPORT_HANDLE})", url=SUPPORT_URL)])
+    kb = InlineKeyboardMarkup(inline_keyboard=rows_kb)
+
+    is_sub = await _check_user_in_channel(m.from_user.id)
+    if is_sub:
+        await arun("UPDATE users SET channel_subscribed=1 WHERE id=?", (m.from_user.id,))
+    bonus_txt = "\n🎁 По приглашению друга тебе уже начислено +5 бонусных ИИ-запросов!" if ref_id else ""
+    chan_line = "" if is_sub else f'\n📢 Новости и обновления (по желанию): <a href="{CHANNEL_URL}">{CHANNEL_HANDLE}</a>'
+    await m.answer(
+        f"""Привет! Я <b>SnapEat</b> — умный дневник питания и КБЖУ.
+
+📸 Фотографируй еду или этикетки, пиши текстом, отправляй голос или фото прямо сюда — я посчитаю КБЖУ и предложу добавить в дневник.
+Бесплатный пробный лимит — <b>{FREE_MONTHLY_LIMIT} ИИ-запросов в месяц</b> и <b>{FREE_MEALPLAN_LIMIT} бесплатный рацион</b>.{chan_line}
+💬 Вопросы и оплата: {SUPPORT_HANDLE}{bonus_txt}""",
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+        reply_markup=kb,
+    )
+
+
+@dp.message(Command("admin"))
+async def on_admin_cmd(m: Message):
+    if m.from_user.id not in ADMIN_IDS:
+        return
+    if not BASE_URL:
+        await m.answer("⚠️ WEBAPP_URL не задан в переменных окружения.")
+        return
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="🛡️ Открыть админ-панель", web_app=WebAppInfo(url=f"{BASE_URL}/admin"))]]
+    )
+    await m.answer("Панель управления SnapEat:", reply_markup=kb)
+
+
+@dp.message(Command("request"))
+async def on_request_cmd(m: Message):
+    parts = (m.text or "").split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await m.answer("Напишите обращение после команды, например:\n<code>/request Не пришла оплата</code>", parse_mode="HTML")
+        return
+    u = await asyncio.to_thread(get_user, m.from_user.id, m.from_user.full_name, None, m.from_user.username or "")
+    msg_txt = re.sub(r"\s+", " ", parts[1].strip())[:800]
+    now_ts = int(time.time())
+    await arun(
+        "INSERT INTO support_requests(uid, username, user_name, category, message, status, created_at, updated_at) "
+        "VALUES(?,?,?,?,?,?,?,?)",
+        (u["id"], u.get("username") or "", u.get("name") or "", "bot", msg_txt, "new", now_ts, now_ts),
+    )
+    await adb_log("INFO", "support_request", f"@{u.get('username') or '-'}: {msg_txt[:120]}", u["id"])
+    await m.answer("✅ Ваше обращение отправлено администратору. Мы ответим вам в этом чате!")
+
+
 @dp.pre_checkout_query()
 async def on_pre_checkout(q: PreCheckoutQuery):
     uid, item = parse_payload(q.invoice_payload)
@@ -2111,8 +2221,7 @@ async def on_paid(m: Message):
         await adb_log("ERROR", "bad_stars_payment", f"payload={sp.invoice_payload}", m.from_user.id)
         return
     await asyncio.to_thread(get_user, uid, m.from_user.full_name, None, m.from_user.username or "")
-    credited = await asyncio.to_thread(credit_payment, uid, item, sp.telegram_payment_charge_id, sp.total_amount, 0.0, "stars")
-    if not credited:
+    if not await asyncio.to_thread(credit_payment, uid, item, sp.telegram_payment_charge_id, sp.total_amount, 0.0, "stars"):
         return
     u = await asyncio.to_thread(get_user, uid)
     it = CATALOG[item]
@@ -2137,8 +2246,7 @@ async def on_grantpro_cmd(m: Message):
         await m.answer("Использование: <code>/grantpro @username_или_id [дней=30]</code>", parse_mode="HTML")
         return
     target = parts[1].strip()
-    days = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 30
-    days = max(1, min(days, 3650))
+    days = max(1, min(int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 30, 3650))
     u = await asyncio.to_thread(_find_user_by_target, target)
     if not u:
         await m.answer("Пользователь не найден")
@@ -2189,7 +2297,9 @@ async def on_addai_cmd(m: Message):
             pass
 
 
-async def _handle_chat_food_query(m: Message, text_query: str = "", image_data_url: str = "", transcript_prefix: str = ""):
+async def _handle_chat_food_query(
+    m: Message, text_query: str = "", image_data_url: str = "", transcript_prefix: str = ""
+):
     uid = m.from_user.id
     if not check_flood(uid, "ai"):
         await m.answer("⏳ Слишком много запросов подряд. Подождите пару секунд.")
@@ -2197,9 +2307,13 @@ async def _handle_chat_food_query(m: Message, text_query: str = "", image_data_u
     u = await asyncio.to_thread(get_user, uid, m.from_user.full_name, None, m.from_user.username or "")
     source, period_month = await asyncio.to_thread(consume_ai_quota, uid)
     if not source:
-        kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="🥗 Открыть тарифы", web_app=WebAppInfo(url=BASE_URL))
-        ]]) if BASE_URL else None
+        kb = (
+            InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="🥗 Открыть тарифы", web_app=WebAppInfo(url=BASE_URL))]]
+            )
+            if BASE_URL
+            else None
+        )
         await m.answer(
             f"Лимит бесплатных ИИ-запросов ({FREE_MONTHLY_LIMIT}/мес) исчерпан. Откройте приложение или напишите {SUPPORT_HANDLE}.",
             reply_markup=kb,
@@ -2222,23 +2336,31 @@ async def _handle_chat_food_query(m: Message, text_query: str = "", image_data_u
 
     token = uuid.uuid4().hex[:10]
     local_dt = datetime.now(timezone.utc) + timedelta(minutes=int(u.get("tz_offset") or 180))
-    day_str = local_dt.date().isoformat()
-    meal_key = _guess_meal_by_hour(local_dt.hour)
     _prune_pending_chat_food()
-    _pending_chat_food[token] = {"uid": uid, "day": day_str, "meal": meal_key, "items": items, "exp": time.time() + 1800}
+    _pending_chat_food[token] = {
+        "uid": uid,
+        "day": local_dt.date().isoformat(),
+        "meal": _guess_meal_by_hour(local_dt.hour),
+        "items": items,
+        "exp": time.time() + 1800,
+    }
 
     tot_k = round(sum(x["kcal"] for x in items), 1)
     tot_p = round(sum(x["p"] for x in items), 1)
     tot_f = round(sum(x["f"] for x in items), 1)
     tot_c = round(sum(x["c"] for x in items), 1)
-    lines = [f"• {html.escape(x['name'])} ({int(round(x['grams']))} г) — {int(round(x['kcal']))} ккал" for x in items]
+    lines = [
+        f"• {html.escape(x['name'])} ({int(round(x['grams']))} г) — {int(round(x['kcal']))} ккал"
+        for x in items
+    ]
     tr_line = f"🎙 <i>Распознано:</i> «{html.escape(transcript_prefix)}»\n\n" if transcript_prefix else ""
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="✅ Добавить в дневник на сегодня", callback_data=f"addfood:{token}")
-    ]])
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="✅ Добавить в дневник на сегодня", callback_data=f"addfood:{token}")]]
+    )
     await m.answer(
-        f"{tr_line}<b>Расчёт КБЖУ:</b>\n" + "\n".join(lines) +
-        f"\n\n<b>Итого:</b> {int(round(tot_k))} ккал · Б {tot_p} · Ж {tot_f} · У {tot_c}",
+        f"{tr_line}<b>Расчёт КБЖУ:</b>\n"
+        + "\n".join(lines)
+        + f"\n\n<b>Итого:</b> {int(round(tot_k))} ккал · Б {tot_p} · Ж {tot_f} · У {tot_c}",
         parse_mode="HTML",
         reply_markup=kb,
     )
@@ -2255,7 +2377,19 @@ async def on_addfood_cb(cb: CallbackQuery):
     for i, it in enumerate(rec["items"]):
         await arun(
             "INSERT INTO entries(uid,day,name,grams,kcal,p,f,c,src,ts,meal) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-            (rec["uid"], rec["day"], it["name"], it["grams"], it["kcal"], it["p"], it["f"], it["c"], "bot_chat", int(time.time() * 1000) + i, rec["meal"]),
+            (
+                rec["uid"],
+                rec["day"],
+                it["name"],
+                it["grams"],
+                it["kcal"],
+                it["p"],
+                it["f"],
+                it["c"],
+                "bot_chat",
+                int(time.time() * 1000) + i,
+                rec["meal"],
+            ),
         )
     _pending_chat_food.pop(token, None)
     await cb.answer("Добавлено в дневник!")
@@ -2296,10 +2430,8 @@ async def on_photo_msg(m: Message):
 @dp.message(F.text & ~F.text.startswith("/"))
 async def on_text_food_msg(m: Message):
     txt = (m.text or "").strip()
-    if len(txt) < 2:
-        return
-    await _handle_chat_food_query(m, text_query=txt)
-
+    if len(txt) >= 2:
+        await _handle_chat_food_query(m, text_query=txt)
 
 
 async def _ping_self():
@@ -2309,14 +2441,144 @@ async def _ping_self():
     try:
         async with httpx.AsyncClient(timeout=15) as cl:
             r = await cl.get(keepalive_url)
-            log.debug("Keepalive ping %s -> %s", keepalive_url, r.status_code)
             if r.status_code >= 400:
                 log.warning("Keepalive ping returned %s for %s", r.status_code, keepalive_url)
     except Exception as e:
         log.warning("Keepalive ping failed: %s", _err(e))
 
 
+async def _run_periodic_backup(now_s: int):
+    global _last_backup_ts, _last_health_alert_ts
+    if now_s - _last_backup_ts < BACKUP_INTERVAL_HOURS * 3600:
+        return
+    _last_backup_ts = now_s
+    try:
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        b_users = await arun("SELECT COUNT(*) AS c FROM users")
+        b_pays = await arun(
+            "SELECT COUNT(*) AS c, COALESCE(SUM(amount_rub),0) AS rub, COALESCE(SUM(stars),0) AS stars "
+            "FROM payments WHERE status='succeeded'"
+        )
+        snap = {
+            "ts": now_s,
+            "iso": datetime.now(timezone.utc).isoformat(),
+            "users_count": int((b_users[0] or {}).get("c") or 0),
+            "payments": b_pays[0] if b_pays else {},
+        }
+        b_path = os.path.join(
+            BACKUP_DIR, f"snapeat_snapshot_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.json"
+        )
+        with open(b_path, "w", encoding="utf-8") as bf:
+            json.dump(snap, bf, ensure_ascii=False, indent=2)
+        snaps = sorted(os.listdir(BACKUP_DIR))
+        for old_f in snaps[:-7]:
+            try:
+                os.remove(os.path.join(BACKUP_DIR, old_f))
+            except Exception:
+                pass
+    except Exception as be:
+        log.warning("Backup snapshot failed: %s", _err(be))
+        if ADMIN_IDS and (now_s - _last_health_alert_ts > 3600):
+            _last_health_alert_ts = now_s
+            for aid in ADMIN_IDS:
+                try:
+                    await bot.send_message(aid, f"⚠️ <b>Сбой бэкапа/проверки</b>: {html.escape(_err(be))}", parse_mode="HTML")
+                except Exception:
+                    pass
+
+
+async def _process_user_reminders(u: dict, now_s: int, now_utc: datetime, kb: InlineKeyboardMarkup):
+    uid = int(u["id"])
+    local_dt = now_utc + timedelta(minutes=int(u.get("tz_offset") or 180))
+    local_day = local_dt.date().isoformat()
+    local_hour = local_dt.hour
+
+    pro_until = int(u.get("pro_until") or 0)
+    if pro_until > 0:
+        days_left = (pro_until - now_s) / 86400.0
+        if 0 < days_left <= 3.0 and not int(u.get("pro_exp_warn_3d") or 0):
+            await arun("UPDATE users SET pro_exp_warn_3d=1 WHERE id=?", (uid,))
+            try:
+                await bot.send_message(
+                    uid,
+                    "⏳ Подписка <b>SnapEat Pro</b> закончится через 3 дня. Продлите в один тап!",
+                    parse_mode="HTML",
+                    reply_markup=kb,
+                )
+            except Exception:
+                pass
+        elif pro_until <= now_s and not int(u.get("pro_exp_warn_0d") or 0):
+            await arun("UPDATE users SET pro_exp_warn_0d=1, pro_exp_warn_3d=0 WHERE id=?", (uid,))
+            try:
+                await bot.send_message(
+                    uid,
+                    "🔔 Подписка <b>SnapEat Pro</b> сегодня завершилась. Откройте приложение, чтобы продлить её.",
+                    parse_mode="HTML",
+                    reply_markup=kb,
+                )
+            except Exception:
+                pass
+
+    last_dig = u.get("last_weekly_digest") or ""
+    if local_hour == 19 and (not last_dig or (date.fromisoformat(local_day) - date.fromisoformat(last_dig)).days >= 7):
+        end_d = local_dt.date()
+        start_d = end_d - timedelta(days=6)
+        w_rows = await arun(
+            "SELECT day, SUM(kcal) AS k FROM entries WHERE uid=? AND day BETWEEN ? AND ? GROUP BY day",
+            (uid, start_d.isoformat(), end_d.isoformat()),
+        )
+        if w_rows:
+            active_days = len(w_rows)
+            avg_kcal = round(sum(float(r.get("k") or 0) for r in w_rows) / max(1, active_days))
+            w_pts = await arun("SELECT weight FROM weights WHERE uid=? ORDER BY day DESC LIMIT 2", (uid,))
+            w_delta_txt = ""
+            if len(w_pts) >= 2:
+                diff_w = round(float(w_pts[0]["weight"]) - float(w_pts[1]["weight"]), 1)
+                w_delta_txt = f" · Вес: {diff_w:+.1f} кг"
+            await arun("UPDATE users SET last_weekly_digest=? WHERE id=?", (local_day, uid))
+            try:
+                await bot.send_message(
+                    uid,
+                    f"📊 <b>Итог за 7 дней:</b> вели дневник {active_days}/7 дн., средний калораж ~{avg_kcal} ккал{w_delta_txt}.",
+                    parse_mode="HTML",
+                    reply_markup=kb,
+                )
+            except Exception:
+                pass
+
+    last_seen = int(u.get("last_seen") or 0)
+    last_nudge = int(u.get("last_nudge_ts") or 0)
+    if local_hour == 12 and last_seen > 0 and (now_s - last_seen) >= 2 * 86400 and (now_s - last_nudge) >= 3 * 86400:
+        await arun("UPDATE users SET last_nudge_ts=? WHERE id=?", (now_s, uid))
+        try:
+            await bot.send_message(
+                uid,
+                "📸 Сфотографируй сегодняшний обед или напиши, что съел — посчитаю КБЖУ за пару секунд!",
+                reply_markup=kb,
+            )
+        except Exception:
+            pass
+
+    if int(u.get("remind_on") or 0) == 1 and u.get("kcal") is not None:
+        target_hour = u.get("remind_hour") if u.get("remind_hour") is not None else 20
+        if u.get("last_reminded") != local_day and local_hour == target_hour:
+            _, tot = await asyncio.to_thread(day_totals, uid, local_day)
+            rem_kcal = round((u["kcal"] or 0) - tot["kcal"])
+            await arun("UPDATE users SET last_reminded=? WHERE id=?", (local_day, uid))
+            if tot["kcal"] == 0:
+                msg = "👋 Привет! Ты ещё не записал(а) еду за сегодня. Загляни в дневник, чтобы не прервать серию!"
+            elif rem_kcal > 150:
+                msg = f"🍽 До дневной цели осталось <b>{rem_kcal} ккал</b>. Не забудь записать ужин или перекус!"
+            else:
+                return
+            try:
+                await bot.send_message(uid, msg, parse_mode="HTML", reply_markup=kb)
+            except Exception:
+                pass
+
+
 async def reminder_loop():
+    global _last_health_alert_ts
     keepalive_enabled = (os.getenv("KEEPALIVE_ENABLED", "1") or "1").strip().lower() not in ("0", "false", "no", "off")
     last_prune_ts = 0
     while True:
@@ -2327,38 +2589,7 @@ async def reminder_loop():
             last_prune_ts = now_s
         if keepalive_enabled:
             await _ping_self()
-
-        global _last_backup_ts, _last_health_alert_ts
-        if now_s - _last_backup_ts >= BACKUP_INTERVAL_HOURS * 3600:
-            _last_backup_ts = now_s
-            try:
-                os.makedirs(BACKUP_DIR, exist_ok=True)
-                b_users = await arun("SELECT COUNT(*) AS c FROM users")
-                b_pays = await arun("SELECT COUNT(*) AS c, COALESCE(SUM(amount_rub),0) AS rub, COALESCE(SUM(stars),0) AS stars FROM payments WHERE status='succeeded'")
-                snap = {
-                    "ts": now_s,
-                    "iso": datetime.now(timezone.utc).isoformat(),
-                    "users_count": int((b_users[0] or {}).get("c") or 0),
-                    "payments": b_pays[0] if b_pays else {},
-                }
-                b_path = os.path.join(BACKUP_DIR, f"snapeat_snapshot_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.json")
-                with open(b_path, "w", encoding="utf-8") as bf:
-                    json.dump(snap, bf, ensure_ascii=False, indent=2)
-                snaps = sorted(os.listdir(BACKUP_DIR))
-                for old_f in snaps[:-7]:
-                    try:
-                        os.remove(os.path.join(BACKUP_DIR, old_f))
-                    except Exception:
-                        pass
-            except Exception as be:
-                log.warning("Backup snapshot failed: %s", _err(be))
-                if ADMIN_IDS and (now_s - _last_health_alert_ts > 3600):
-                    _last_health_alert_ts = now_s
-                    for aid in ADMIN_IDS:
-                        try:
-                            await bot.send_message(aid, f"⚠️ <b>Сбой бэкапа/проверки</b>: {html.escape(_err(be))}", parse_mode="HTML")
-                        except Exception:
-                            pass
+        await _run_periodic_backup(now_s)
 
         try:
             await arun("SELECT 1")
@@ -2380,101 +2611,13 @@ async def reminder_loop():
                 "last_weekly_digest, last_nudge_ts, last_seen, created_at, "
                 "remind_hour, remind_on, last_reminded, tz_offset FROM users"
             )
-            kb = InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="🥗 Открыть дневник", web_app=WebAppInfo(url=BASE_URL))
-            ]])
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="🥗 Открыть дневник", web_app=WebAppInfo(url=BASE_URL))]]
+            )
             for u in users:
-                uid = int(u["id"])
-                local_dt = now_utc + timedelta(minutes=int(u.get("tz_offset") or 180))
-                local_day = local_dt.date().isoformat()
-                local_hour = local_dt.hour
-
-                pro_until = int(u.get("pro_until") or 0)
-                if pro_until > 0:
-                    days_left = (pro_until - now_s) / 86400.0
-                    if 0 < days_left <= 3.0 and not int(u.get("pro_exp_warn_3d") or 0):
-                        await arun("UPDATE users SET pro_exp_warn_3d=1 WHERE id=?", (uid,))
-                        try:
-                            await bot.send_message(
-                                uid,
-                                "⏳ Подписка <b>SnapEat Pro</b> закончится через 3 дня. Продлите в один тап!",
-                                parse_mode="HTML",
-                                reply_markup=kb,
-                            )
-                        except Exception:
-                            pass
-                    elif pro_until <= now_s and not int(u.get("pro_exp_warn_0d") or 0):
-                        await arun("UPDATE users SET pro_exp_warn_0d=1, pro_exp_warn_3d=0 WHERE id=?", (uid,))
-                        try:
-                            await bot.send_message(
-                                uid,
-                                "🔔 Подписка <b>SnapEat Pro</b> сегодня завершилась. Откройте приложение, чтобы продлить её.",
-                                parse_mode="HTML",
-                                reply_markup=kb,
-                            )
-                        except Exception:
-                            pass
-
-                last_dig = u.get("last_weekly_digest") or ""
-                if local_hour == 19 and (not last_dig or (date.fromisoformat(local_day) - date.fromisoformat(last_dig)).days >= 7):
-                    end_d = local_dt.date()
-                    start_d = end_d - timedelta(days=6)
-                    w_rows = await arun(
-                        "SELECT day, SUM(kcal) AS k FROM entries WHERE uid=? AND day BETWEEN ? AND ? GROUP BY day",
-                        (uid, start_d.isoformat(), end_d.isoformat()),
-                    )
-                    if w_rows:
-                        active_days = len(w_rows)
-                        avg_kcal = round(sum(float(r.get("k") or 0) for r in w_rows) / max(1, active_days))
-                        w_pts = await arun("SELECT weight FROM weights WHERE uid=? ORDER BY day DESC LIMIT 2", (uid,))
-                        w_delta_txt = ""
-                        if len(w_pts) >= 2:
-                            diff_w = round(float(w_pts[0]["weight"]) - float(w_pts[1]["weight"]), 1)
-                            w_delta_txt = f" · Вес: {diff_w:+.1f} кг"
-                        await arun("UPDATE users SET last_weekly_digest=? WHERE id=?", (local_day, uid))
-                        try:
-                            await bot.send_message(
-                                uid,
-                                f"📊 <b>Итог за 7 дней:</b> вели дневник {active_days}/7 дн., средний калораж ~{avg_kcal} ккал{w_delta_txt}.",
-                                parse_mode="HTML",
-                                reply_markup=kb,
-                            )
-                        except Exception:
-                            pass
-
-                last_seen = int(u.get("last_seen") or 0)
-                last_nudge = int(u.get("last_nudge_ts") or 0)
-                if local_hour == 12 and last_seen > 0 and (now_s - last_seen) >= 2 * 86400 and (now_s - last_nudge) >= 3 * 86400:
-                    await arun("UPDATE users SET last_nudge_ts=? WHERE id=?", (now_s, uid))
-                    try:
-                        await bot.send_message(
-                            uid,
-                            "📸 Сфотографируй сегодняшний обед или напиши, что съел — посчитаю КБЖУ за пару секунд!",
-                            reply_markup=kb,
-                        )
-                    except Exception:
-                        pass
-
-                if int(u.get("remind_on") or 0) == 1 and u.get("kcal") is not None:
-                    if u.get("last_reminded") != local_day and local_hour == (u.get("remind_hour") if u.get("remind_hour") is not None else 20):
-                        _, tot = await asyncio.to_thread(day_totals, uid, local_day)
-                        rem_kcal = round((u["kcal"] or 0) - tot["kcal"])
-                        await arun("UPDATE users SET last_reminded=? WHERE id=?", (local_day, uid))
-                        if tot["kcal"] == 0:
-                            msg = "👋 Привет! Ты ещё не записал(а) еду за сегодня. Загляни в дневник, чтобы не прервать серию!"
-                        elif rem_kcal > 150:
-                            msg = f"🍽 До дневной цели осталось <b>{rem_kcal} ккал</b>. Не забудь записать ужин или перекус!"
-                        else:
-                            continue
-                        try:
-                            await bot.send_message(uid, msg, parse_mode="HTML", reply_markup=kb)
-                        except Exception:
-                            pass
+                await _process_user_reminders(u, now_s, now_utc, kb)
         except Exception as e:
             log.warning("reminder_loop error: %s", _err(e))
-
-
-ALLOWED_UPDATES = ["message", "callback_query", "pre_checkout_query"]
 
 
 @asynccontextmanager
@@ -2490,9 +2633,14 @@ async def lifespan(app):
             pass
     if BASE_URL:
         try:
-            await bot.set_webhook(f"{BASE_URL}/webhook/{WH_SECRET}", secret_token=WH_SECRET,
-                                  allowed_updates=ALLOWED_UPDATES)
-            await bot.set_chat_menu_button(menu_button=MenuButtonWebApp(text="Дневник", web_app=WebAppInfo(url=BASE_URL)))
+            await bot.set_webhook(
+                f"{BASE_URL}/webhook/{WH_SECRET}",
+                secret_token=WH_SECRET,
+                allowed_updates=ALLOWED_UPDATES,
+            )
+            await bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(text="Дневник", web_app=WebAppInfo(url=BASE_URL))
+            )
         except Exception as e:
             log.error("webhook setup failed: %s", _err(e))
     task = asyncio.create_task(reminder_loop())
@@ -2516,7 +2664,9 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 @app.post("/webhook/{secret}")
 async def webhook(secret: str, req: Request):
-    if not WH_SECRET or not hmac.compare_digest(secret or "", WH_SECRET) or not hmac.compare_digest(req.headers.get("X-Telegram-Bot-Api-Secret-Token") or "", WH_SECRET):
+    if not WH_SECRET or not hmac.compare_digest(secret or "", WH_SECRET):
+        raise HTTPException(403)
+    if not hmac.compare_digest(req.headers.get("X-Telegram-Bot-Api-Secret-Token") or "", WH_SECRET):
         raise HTTPException(403)
     try:
         payload = await req.json()
@@ -2526,33 +2676,6 @@ async def webhook(secret: str, req: Request):
         return {"ok": False, "ignored": True}
     await dp.feed_update(bot, upd)
     return {"ok": True}
-
-
-def norm_day(day):
-    try:
-        return date.fromisoformat(day).isoformat()
-    except Exception:
-        return date.today().isoformat()
-
-
-MEALS = ("breakfast", "lunch", "dinner", "snack")
-
-
-def day_totals(uid, day):
-    es = run("SELECT * FROM entries WHERE uid=? AND day=? ORDER BY ts", (uid, day))
-    return es, {k: round(sum(e[k] for e in es), 1) for k in ("kcal", "p", "f", "c")}
-
-
-def calc_streak(uid, today):
-    days = {r["day"] for r in run("SELECT DISTINCT day FROM entries WHERE uid=? ORDER BY day DESC LIMIT 400", (uid,))}
-    d = date.fromisoformat(norm_day(today))
-    if d.isoformat() not in days:
-        d -= timedelta(days=1)
-    n = 0
-    while d.isoformat() in days:
-        n += 1
-        d -= timedelta(days=1)
-    return n
 
 
 @app.get("/api/state")
@@ -2571,22 +2694,38 @@ async def state(day: str = "", today: str = "", tz: int = 180, init_data: str = 
     has = u["kcal"] is not None
     norm = {k: u[k] for k in ("kcal", "p", "f", "c")} if has else None
     rem = {k: norm[k] - total[k] for k in total} if has else None
-    prof = {
-        "name": u.get("name") or tu.get("first_name") or "",
-        **{
-            k: u[k]
-            for k in (
-                "sex", "age", "height", "weight", "start_weight", "act", "goal",
-                "target_weight", "pace", "manual", "workouts_per_week", "workout_type",
-                "food_pref", "remind_hour", "remind_on",
-            )
-        },
-    } if has else {
-        "name": u.get("name") or tu.get("first_name") or "",
-        "weight": u.get("weight"),
-        "target_weight": u.get("target_weight"),
-        "start_weight": u.get("start_weight"),
-    }
+    prof = (
+        {
+            "name": u.get("name") or tu.get("first_name") or "",
+            **{
+                k: u[k]
+                for k in (
+                    "sex",
+                    "age",
+                    "height",
+                    "weight",
+                    "start_weight",
+                    "act",
+                    "goal",
+                    "target_weight",
+                    "pace",
+                    "manual",
+                    "workouts_per_week",
+                    "workout_type",
+                    "food_pref",
+                    "remind_hour",
+                    "remind_on",
+                )
+            },
+        }
+        if has
+        else {
+            "name": u.get("name") or tu.get("first_name") or "",
+            "weight": u.get("weight"),
+            "target_weight": u.get("target_weight"),
+            "start_weight": u.get("start_weight"),
+        }
+    )
     w = await arun("SELECT ml FROM water WHERE uid=? AND day=?", (u["id"], day))
     recent = await arun(
         "SELECT name, grams, kcal, p, f, c, last_ts FROM ("
@@ -2624,7 +2763,7 @@ async def state(day: str = "", today: str = "", tz: int = 180, init_data: str = 
         "yookassa_configured": _yookassa_configured(),
         "support": {"handle": SUPPORT_HANDLE, "url": SUPPORT_URL},
         "channel": {"handle": CHANNEL_HANDLE, "url": CHANNEL_URL},
-         "channel_subscribed": bool(u.get("channel_subscribed")),
+        "channel_subscribed": bool(u.get("channel_subscribed")),
     }
 
 
@@ -2641,7 +2780,9 @@ async def create_support_request(r: SupportRequestCreate, init_data: str = "", x
     if len(msg_txt) < 3:
         raise HTTPException(400, "Опишите ваш вопрос чуть подробнее")
     now_ts = int(time.time())
-    open_cnt = await arun("SELECT COUNT(*) AS c FROM support_requests WHERE uid=? AND status IN ('new','in_progress')", (u["id"],))
+    open_cnt = await arun(
+        "SELECT COUNT(*) AS c FROM support_requests WHERE uid=? AND status IN ('new','in_progress')", (u["id"],)
+    )
     if (open_cnt[0]["c"] if open_cnt else 0) >= 5:
         raise HTTPException(429, "У вас уже есть 5 активных обращений. Дождитесь ответа администратора.")
     await arun(
@@ -2654,7 +2795,8 @@ async def create_support_request(r: SupportRequestCreate, init_data: str = "", x
         try:
             await bot.send_message(
                 aid,
-                f"📩 <b>Новое обращение</b> от @{html.escape(u.get('username') or str(u['id']))} (ID {u['id']}, {html.escape(r.category)}):\n{html.escape(msg_txt[:350])}",
+                f"📩 <b>Новое обращение</b> от @{html.escape(u.get('username') or str(u['id']))} "
+                f"(ID {u['id']}, {html.escape(r.category)}):\n{html.escape(msg_txt[:350])}",
                 parse_mode="HTML",
             )
         except Exception:
@@ -2663,13 +2805,17 @@ async def create_support_request(r: SupportRequestCreate, init_data: str = "", x
 
 
 @app.get("/api/suggest")
-async def api_suggest(day: str = "", mode: str = "", seed: int = 0, init_data: str = "", x_init_data: str = Header(default="")):
+async def api_suggest(
+    day: str = "", mode: str = "", seed: int = 0, init_data: str = "", x_init_data: str = Header(default="")
+):
     tu = auth(x_init_data or init_data)
     u = await asyncio.to_thread(get_user, tu["id"], tu.get("first_name", ""), None, tu.get("username", ""))
     if u["kcal"] is None:
         return {"items": []}
     _, t = await asyncio.to_thread(day_totals, u["id"], norm_day(day))
-    return {"items": suggest({k: u[k] - t[k] for k in t}, mode if mode in ("protein", "quick", "light") else "", seed)}
+    return {
+        "items": suggest({k: u[k] - t[k] for k in t}, mode if mode in ("protein", "quick", "light") else "", seed)
+    }
 
 
 @app.get("/api/week")
@@ -2677,14 +2823,18 @@ async def week(day: str = "", init_data: str = "", x_init_data: str = Header(def
     tu = auth(x_init_data or init_data)
     end = date.fromisoformat(norm_day(day))
     start = end - timedelta(days=6)
-    rows = await arun("SELECT day, SUM(kcal) kcal, SUM(p) p, SUM(f) f, SUM(c) c FROM entries "
-               "WHERE uid=? AND day BETWEEN ? AND ? GROUP BY day", (tu["id"], start.isoformat(), end.isoformat()))
+    rows = await arun(
+        "SELECT day, SUM(kcal) kcal, SUM(p) p, SUM(f) f, SUM(c) c FROM entries "
+        "WHERE uid=? AND day BETWEEN ? AND ? GROUP BY day",
+        (tu["id"], start.isoformat(), end.isoformat()),
+    )
     by = {r["day"]: r for r in rows}
-    out = []
-    for i in range(7):
-        d = (start + timedelta(days=i)).isoformat()
-        out.append({"day": d, **{k: round((by.get(d) or {}).get(k) or 0) for k in ("kcal", "p", "f", "c")}})
-    return {"days": out}
+    return {
+        "days": [
+            {"day": (start + timedelta(days=i)).isoformat(), **{k: round((by.get((start + timedelta(days=i)).isoformat()) or {}).get(k) or 0) for k in ("kcal", "p", "f", "c")}}
+            for i in range(7)
+        ]
+    }
 
 
 class Profile(BaseModel):
@@ -2721,7 +2871,13 @@ async def save_profile(p: Profile, init_data: str = "", x_init_data: str = Heade
         n = {"kcal": p.kcal, "p": p.p, "f": p.f, "c": p.c}
     else:
         n = calc_norms(
-            p.sex, p.age, p.height, p.weight, p.act, p.goal, p.pace,
+            p.sex,
+            p.age,
+            p.height,
+            p.weight,
+            p.act,
+            p.goal,
+            p.pace,
             workouts_per_week=p.workouts_per_week,
             workout_type=p.workout_type,
             food_pref=p.food_pref,
@@ -2754,9 +2910,27 @@ async def save_profile(p: Profile, init_data: str = "", x_init_data: str = Heade
         "workouts_per_week=?,workout_type=?,food_pref=?,target_weight=?,pace=?,manual=?,"
         "kcal=?,p=?,f=?,c=?,remind_on=?,remind_hour=? WHERE id=?",
         (
-            clean_name, p.sex, p.age, p.height, p.weight, start_w, p.act, p.goal,
-            p.workouts_per_week, p.workout_type, p.food_pref, p.target_weight, p.pace,
-            int(p.manual), n["kcal"], n["p"], n["f"], n["c"], int(p.remind_on), p.remind_hour, tu["id"],
+            clean_name,
+            p.sex,
+            p.age,
+            p.height,
+            p.weight,
+            start_w,
+            p.act,
+            p.goal,
+            p.workouts_per_week,
+            p.workout_type,
+            p.food_pref,
+            p.target_weight,
+            p.pace,
+            int(p.manual),
+            n["kcal"],
+            n["p"],
+            n["f"],
+            n["c"],
+            int(p.remind_on),
+            p.remind_hour,
+            tu["id"],
         ),
     )
     await arun(
@@ -2800,8 +2974,10 @@ async def add_entry(r: AddReq, init_data: str = "", x_init_data: str = Header(de
     await asyncio.to_thread(get_user, tu["id"], tu.get("first_name", ""), None, tu.get("username", ""))
     day = norm_day(r.day)
     for i, it in enumerate(r.items):
-        await arun("INSERT INTO entries(uid,day,name,grams,kcal,p,f,c,src,ts,meal) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-            (tu["id"], day, it.name, it.grams, it.kcal, it.p, it.f, it.c, r.src, int(time.time() * 1000) + i, r.meal))
+        await arun(
+            "INSERT INTO entries(uid,day,name,grams,kcal,p,f,c,src,ts,meal) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (tu["id"], day, it.name, it.grams, it.kcal, it.p, it.f, it.c, r.src, int(time.time() * 1000) + i, r.meal),
+        )
     return {"ok": True}
 
 
@@ -2815,12 +2991,16 @@ class CopyMealReq(BaseModel):
 async def copy_meal(r: CopyMealReq, init_data: str = "", x_init_data: str = Header(default="")):
     tu = auth(x_init_data or init_data)
     fd, td = norm_day(r.from_day), norm_day(r.to_day)
-    rows = await arun("SELECT * FROM entries WHERE uid=? AND day=? AND meal=? ORDER BY ts", (tu["id"], fd, r.meal))
+    rows = await arun(
+        "SELECT * FROM entries WHERE uid=? AND day=? AND meal=? ORDER BY ts", (tu["id"], fd, r.meal)
+    )
     if not rows:
         raise HTTPException(404, "В выбранном приёме пищи ничего нет")
     for i, e in enumerate(rows):
-        await arun("INSERT INTO entries(uid,day,name,grams,kcal,p,f,c,src,ts,meal) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-            (tu["id"], td, e["name"], e["grams"], e["kcal"], e["p"], e["f"], e["c"], "copy", int(time.time() * 1000) + i, r.meal))
+        await arun(
+            "INSERT INTO entries(uid,day,name,grams,kcal,p,f,c,src,ts,meal) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (tu["id"], td, e["name"], e["grams"], e["kcal"], e["p"], e["f"], e["c"], "copy", int(time.time() * 1000) + i, r.meal),
+        )
     return {"ok": True, "count": len(rows)}
 
 
@@ -2868,21 +3048,26 @@ async def add_water(r: WaterReq, init_data: str = "", x_init_data: str = Header(
     tu = auth(x_init_data or init_data)
     day = norm_day(r.day)
     cur = await arun("SELECT ml FROM water WHERE uid=? AND day=?", (tu["id"], day))
-    new = max(0, min(10000, (cur[0]["ml"] if cur else 0) + r.ml))
+    new_ml = max(0, min(10000, (cur[0]["ml"] if cur else 0) + r.ml))
     await arun(
         "INSERT INTO water(uid,day,ml) VALUES(?,?,?) ON CONFLICT(uid,day) DO UPDATE SET ml=EXCLUDED.ml",
-        (tu["id"], day, new),
+        (tu["id"], day, new_ml),
     )
-    return {"water": new}
+    return {"water": new_ml}
 
 
 @app.post("/api/fav")
 async def add_fav(it: Item, init_data: str = "", x_init_data: str = Header(default="")):
     tu = auth(x_init_data or init_data)
-    existing = await arun("SELECT id FROM favs WHERE uid=? AND name=? AND ROUND(COALESCE(grams,0)::numeric)=ROUND(?::numeric)", (tu["id"], it.name, it.grams))
+    existing = await arun(
+        "SELECT id FROM favs WHERE uid=? AND name=? AND ROUND(COALESCE(grams,0)::numeric)=ROUND(?::numeric)",
+        (tu["id"], it.name, it.grams),
+    )
     if not existing:
-        await arun("INSERT INTO favs(uid,name,grams,kcal,p,f,c) VALUES(?,?,?,?,?,?,?)",
-            (tu["id"], it.name, it.grams, it.kcal, it.p, it.f, it.c))
+        await arun(
+            "INSERT INTO favs(uid,name,grams,kcal,p,f,c) VALUES(?,?,?,?,?,?,?)",
+            (tu["id"], it.name, it.grams, it.kcal, it.p, it.f, it.c),
+        )
     return {"ok": True}
 
 
@@ -2969,8 +3154,6 @@ async def ai_mealplan(r: MealPlanReq, init_data: str = "", x_init_data: str = He
     return {**plan_data, "plan_source": mp_source, "ai": ai_status(updated_u)}
 
 
-
-
 class ComboCreateReq(BaseModel):
     title: str = Field(min_length=1, max_length=80)
     meal: Literal["breakfast", "lunch", "dinner", "snack"] = "snack"
@@ -2987,13 +3170,12 @@ async def get_combos(init_data: str = "", x_init_data: str = Header(default=""))
             it_list = json.loads(r.get("items_json") or "[]")
         except Exception:
             it_list = []
-        tot_k = round(sum(float(x.get("kcal") or 0) for x in it_list), 1)
         out.append({
             "id": r["id"],
             "title": r["title"],
             "meal": r["meal"],
             "items": it_list,
-            "kcal": tot_k,
+            "kcal": round(sum(float(x.get("kcal") or 0) for x in it_list), 1),
             "uses_count": int(r.get("uses_count") or 0),
         })
     return {"combos": out}
@@ -3047,6 +3229,7 @@ async def delete_combo(cid: int, init_data: str = "", x_init_data: str = Header(
     await arun("DELETE FROM user_combos WHERE id=? AND uid=?", (cid, tu["id"]))
     return {"ok": True}
 
+
 TariffId = Literal["pack_10", "pack_30", "sub_30d", "mealplan_1"]
 
 
@@ -3077,17 +3260,6 @@ async def create_invoice(r: InvoiceReq, init_data: str = "", x_init_data: str = 
     return {"invoice_url": link, "item_id": r.item_id, "stars": stars_amount}
 
 
-def _yookassa_configured() -> bool:
-    return bool(
-        YOOKASSA_SHOP_ID
-        and YOOKASSA_SECRET_KEY
-        and "REPLACE_WITH_" not in YOOKASSA_SHOP_ID
-        and "REPLACE_WITH_" not in YOOKASSA_SECRET_KEY
-        and YOOKASSA_SHOP_ID != "YOUR_SHOP_ID"
-        and YOOKASSA_SECRET_KEY != "YOUR_SECRET_KEY"
-    )
-
-
 class YooKassaCreateReq(BaseModel):
     item_id: TariffId
     payment_method: Literal["sbp", "bank_card"] = "sbp"
@@ -3104,25 +3276,12 @@ async def create_yookassa_payment(r: YooKassaCreateReq, init_data: str = "", x_i
         )
     it = CATALOG[r.item_id]
     rub_amount = float(it["price_rub"])
-    idempotence_key = str(uuid.uuid4())
     body = {
-        "amount": {
-            "value": f"{rub_amount:.2f}",
-            "currency": "RUB",
-        },
-        "confirmation": {
-            "type": "redirect",
-            "return_url": YOOKASSA_RETURN_URL,
-        },
-        "payment_method_data": {
-            "type": r.payment_method,
-        },
+        "amount": {"value": f"{rub_amount:.2f}", "currency": "RUB"},
+        "confirmation": {"type": "redirect", "return_url": YOOKASSA_RETURN_URL},
+        "payment_method_data": {"type": r.payment_method},
         "description": f"SnapEat: {it['title']} ({int(rub_amount)} ₽)",
-        "metadata": {
-            "user_id": str(tu["id"]),
-            "item_id": r.item_id,
-            "payment_method": r.payment_method,
-        },
+        "metadata": {"user_id": str(tu["id"]), "item_id": r.item_id, "payment_method": r.payment_method},
     }
     try:
         async with httpx.AsyncClient(timeout=20) as cl:
@@ -3130,7 +3289,7 @@ async def create_yookassa_payment(r: YooKassaCreateReq, init_data: str = "", x_i
                 f"{YOOKASSA_API_BASE}/payments",
                 json=body,
                 auth=(YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY),
-                headers={"Idempotence-Key": idempotence_key},
+                headers={"Idempotence-Key": str(uuid.uuid4())},
             )
     except Exception as e:
         log.error("YooKassa create payment network error: %s", _err(e))
@@ -3210,7 +3369,6 @@ async def yookassa_webhook(req: Request):
         log.warning("YooKassa payment %s has unknown item_id %s", payment_id, item_id)
         return {"ok": True, "warning": "unknown item_id"}
 
-    amt_val = 0.0
     try:
         amt_val = float(((verified.get("amount") or {}).get("value")) or CATALOG[item_id]["price_rub"])
     except Exception:
@@ -3218,15 +3376,7 @@ async def yookassa_webhook(req: Request):
 
     await asyncio.to_thread(get_user, uid)
     credited = await asyncio.to_thread(
-        credit_payment,
-        uid,
-        item_id,
-        f"yk:{payment_id}",
-        0,
-        amt_val,
-        "yookassa",
-        "succeeded",
-        meta,
+        credit_payment, uid, item_id, f"yk:{payment_id}", 0, amt_val, "yookassa", "succeeded", meta
     )
     if credited:
         try:
@@ -3245,50 +3395,6 @@ async def yookassa_webhook(req: Request):
     return {"ok": True, "credited": credited, "payment_id": payment_id}
 
 
-def _find_user_by_target(target: str) -> dict | None:
-    raw = (target or "").strip()
-    if not raw:
-        return None
-    if raw.lstrip("-").isdigit():
-        rows = run("SELECT * FROM users WHERE id=?", (int(raw),))
-        return rows[0] if rows else None
-    clean_un = _normalize_username(raw).lower()
-    if clean_un:
-        rows = run("SELECT * FROM users WHERE LOWER(username)=? LIMIT 1", (clean_un,))
-        if rows:
-            return rows[0]
-    rows = run("SELECT * FROM users WHERE LOWER(name) LIKE ? ORDER BY last_seen DESC LIMIT 1", (f"%{raw.lower()}%",))
-    return rows[0] if rows else None
-
-
-def _serialize_admin_user(u: dict) -> dict:
-    now_ts = int(time.time())
-    pro_until = int(u.get("pro_until") or 0)
-    is_pro = pro_until > now_ts
-    cur_month = _current_month_str()
-    today_str = date.today().isoformat()
-    return {
-        "id": int(u["id"]),
-        "username": u.get("username") or "",
-        "name": u.get("name") or "",
-        "is_pro": is_pro,
-        "pro_until": pro_until,
-        "pro_days_left": max(0, round((pro_until - now_ts) / 86400, 1)) if is_pro else 0,
-        "extra_ai_credits": int(u.get("extra_ai_credits") or 0),
-        "mealplan_credits": int(u.get("mealplan_credits") or 0),
-        "trial_used": int(u.get("trial_used") or 0) if (u.get("trial_month") or "") == cur_month else 0,
-        "ai_used_today": int(u.get("ai_n") or 0) if (u.get("ai_day") or "") == today_str else 0,
-        "pro_month_used": int(u.get("pro_month_used") or 0) if (u.get("pro_month") or "") == cur_month else 0,
-        "ref_count": int(u.get("ref_count") or 0),
-        "goal": u.get("goal") or "",
-        "weight": u.get("weight"),
-        "target_weight": u.get("target_weight"),
-        "kcal": u.get("kcal"),
-        "created_at": int(u.get("created_at") or 0),
-        "last_seen": int(u.get("last_seen") or 0),
-    }
-
-
 @app.get("/api/admin/stats")
 async def admin_stats(force: int = 0, init_data: str = "", x_init_data: str = Header(default="")):
     require_admin(x_init_data or init_data)
@@ -3299,38 +3405,44 @@ async def admin_stats(force: int = 0, init_data: str = "", x_init_data: str = He
 
     today_str = date.today().isoformat()
     cur_month = _current_month_str()
-    u_agg = (await arun(
-        "SELECT "
-        "COUNT(*) AS total_users, "
-        "COUNT(*) FILTER (WHERE pro_until > ?) AS active_pro, "
-        "COUNT(*) FILTER (WHERE created_at >= ?) AS new_24h, "
-        "COUNT(*) FILTER (WHERE created_at >= ?) AS new_7d, "
-        "COUNT(*) FILTER (WHERE last_seen >= ?) AS active_24h, "
-        "COALESCE(SUM(ai_n) FILTER (WHERE ai_day = ?), 0) AS ai_today, "
-        "COALESCE(SUM(pro_month_used) FILTER (WHERE pro_month = ?), 0) + "
-        "COALESCE(SUM(trial_used) FILTER (WHERE trial_month = ?), 0) AS ai_month "
-        "FROM users",
-        (now_ts, now_ts - 86400, now_ts - 7 * 86400, now_ts - 86400, today_str, cur_month, cur_month),
-    ))[0]
+    u_agg = (
+        await arun(
+            "SELECT "
+            "COUNT(*) AS total_users, "
+            "COUNT(*) FILTER (WHERE pro_until > ?) AS active_pro, "
+            "COUNT(*) FILTER (WHERE created_at >= ?) AS new_24h, "
+            "COUNT(*) FILTER (WHERE created_at >= ?) AS new_7d, "
+            "COUNT(*) FILTER (WHERE last_seen >= ?) AS active_24h, "
+            "COALESCE(SUM(ai_n) FILTER (WHERE ai_day = ?), 0) AS ai_today, "
+            "COALESCE(SUM(pro_month_used) FILTER (WHERE pro_month = ?), 0) + "
+            "COALESCE(SUM(trial_used) FILTER (WHERE trial_month = ?), 0) AS ai_month "
+            "FROM users",
+            (now_ts, now_ts - 86400, now_ts - 7 * 86400, now_ts - 86400, today_str, cur_month, cur_month),
+        )
+    )[0]
 
-    p_agg = (await arun(
-        "SELECT "
-        "COUNT(*) AS total_payments, "
-        "COALESCE(SUM(amount_rub), 0) AS total_rub, "
-        "COALESCE(SUM(stars), 0) AS total_stars, "
-        "COALESCE(SUM(amount_rub) FILTER (WHERE ts >= ?), 0) AS rub_30d, "
-        "COALESCE(SUM(stars) FILTER (WHERE ts >= ?), 0) AS stars_30d "
-        "FROM payments WHERE status='succeeded'",
-        (now_ts - 30 * 86400, now_ts - 30 * 86400),
-    ))[0]
+    p_agg = (
+        await arun(
+            "SELECT "
+            "COUNT(*) AS total_payments, "
+            "COALESCE(SUM(amount_rub), 0) AS total_rub, "
+            "COALESCE(SUM(stars), 0) AS total_stars, "
+            "COALESCE(SUM(amount_rub) FILTER (WHERE ts >= ?), 0) AS rub_30d, "
+            "COALESCE(SUM(stars) FILTER (WHERE ts >= ?), 0) AS stars_30d "
+            "FROM payments WHERE status='succeeded'",
+            (now_ts - 30 * 86400, now_ts - 30 * 86400),
+        )
+    )[0]
 
-    req_agg = (await arun(
-        "SELECT COUNT(*) FILTER (WHERE status IN ('new','in_progress')) AS open_requests FROM support_requests"
-    ))[0]
-    log_agg = (await arun(
-        "SELECT COUNT(*) AS total_logs, COUNT(*) FILTER (WHERE level='ERROR' AND ts >= ?) AS errors_24h FROM bot_logs",
-        (now_ts - 86400,),
-    ))[0]
+    req_agg = (
+        await arun("SELECT COUNT(*) FILTER (WHERE status IN ('new','in_progress')) AS open_requests FROM support_requests")
+    )[0]
+    log_agg = (
+        await arun(
+            "SELECT COUNT(*) AS total_logs, COUNT(*) FILTER (WHERE level='ERROR' AND ts >= ?) AS errors_24h FROM bot_logs",
+            (now_ts - 86400,),
+        )
+    )[0]
 
     start_7d = now_ts - 6 * 86400
     pay_rows = await arun(
@@ -3369,7 +3481,9 @@ async def admin_stats(force: int = 0, init_data: str = "", x_init_data: str = He
 
 
 @app.get("/api/admin/users")
-async def admin_users(q: str = "", filter: str = "all", limit: int = 30, offset: int = 0, init_data: str = "", x_init_data: str = Header(default="")):
+async def admin_users(
+    q: str = "", filter: str = "all", limit: int = 30, offset: int = 0, init_data: str = "", x_init_data: str = Header(default="")
+):
     require_admin(x_init_data or init_data)
     lim = max(1, min(int(limit or 30), 100))
     off = max(0, int(offset or 0))
@@ -3423,39 +3537,31 @@ async def admin_user_action(r: AdminSubActionReq, init_data: str = "", x_init_da
     log_detail = ""
 
     if r.action == "grant_pro":
-        cur_until = int(u.get("pro_until") or 0)
-        new_until = int(max(now_ts, cur_until) + r.days * 86400)
+        new_until = int(max(now_ts, int(u.get("pro_until") or 0)) + r.days * 86400)
         await arun("UPDATE users SET pro_until=? WHERE id=?", (new_until, uid))
         dt_str = datetime.fromtimestamp(new_until).strftime("%d.%m.%Y")
         notify_msg = f"👑 Администратор активировал вам подписку <b>SnapEat Pro</b> на {r.days} дн. (до {dt_str})!"
         log_detail = f"grant_pro +{r.days}d -> {dt_str}"
-
     elif r.action == "revoke_pro":
         await arun("UPDATE users SET pro_until=0 WHERE id=?", (uid,))
         notify_msg = "ℹ️ Ваша подписка SnapEat Pro была отключена администратором."
         log_detail = "revoke_pro"
-
     elif r.action == "add_credits":
-        cur_c = int(u.get("extra_ai_credits") or 0)
-        new_c = max(0, cur_c + r.amount)
+        new_c = max(0, int(u.get("extra_ai_credits") or 0) + r.amount)
         await arun("UPDATE users SET extra_ai_credits=? WHERE id=?", (new_c, uid))
         if r.amount > 0:
             notify_msg = f"🎁 Вам начислено +{r.amount} бонусных ИИ-запросов! Текущий баланс: {new_c}."
         log_detail = f"add_credits {r.amount:+d} (now {new_c})"
-
     elif r.action == "set_credits":
         new_c = max(0, r.amount)
         await arun("UPDATE users SET extra_ai_credits=? WHERE id=?", (new_c, uid))
         log_detail = f"set_credits -> {new_c}"
-
     elif r.action == "add_mealplan":
-        cur_m = int(u.get("mealplan_credits") or 0)
-        new_m = max(0, cur_m + r.amount)
+        new_m = max(0, int(u.get("mealplan_credits") or 0) + r.amount)
         await arun("UPDATE users SET mealplan_credits=? WHERE id=?", (new_m, uid))
         if r.amount > 0:
             notify_msg = f"🥗 Вам начислено +{r.amount} билетов на ИИ-рацион! Текущий баланс: {new_m}."
         log_detail = f"add_mealplan {r.amount:+d} (now {new_m})"
-
     elif r.action == "reset_limits":
         await arun("UPDATE users SET trial_used=0, ai_n=0, pro_month_used=0, free_mealplan_used=0 WHERE id=?", (uid,))
         log_detail = "reset_limits"
@@ -3484,7 +3590,6 @@ class AdminBroadcastReq(BaseModel):
 
 
 async def _run_broadcast_job(job_id: str, admin_id: int, audience: str, raw_message: str):
-    from aiogram.exceptions import TelegramRetryAfter
     job = _broadcast_jobs.get(job_id)
     if not job:
         return
@@ -3500,7 +3605,8 @@ async def _run_broadcast_job(job_id: str, admin_id: int, audience: str, raw_mess
         safe_msg = html.escape(raw_message.strip())
         kb = (
             InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🥗 Открыть SnapEat", web_app=WebAppInfo(url=BASE_URL))]])
-            if BASE_URL else None
+            if BASE_URL
+            else None
         )
         for row in rows:
             uid = int(row["id"])
@@ -3550,10 +3656,7 @@ async def admin_broadcast_status(job_id: str = "", init_data: str = "", x_init_d
     require_admin(x_init_data or init_data)
     if job_id and job_id in _broadcast_jobs:
         return {"job": _broadcast_jobs[job_id]}
-    latest = None
-    for j in reversed(list(_broadcast_jobs.values())):
-        latest = j
-        break
+    latest = next(reversed(list(_broadcast_jobs.values())), None)
     return {"job": latest}
 
 
@@ -3592,7 +3695,10 @@ async def admin_payments(q: str = "", limit: int = 40, offset: int = 0, init_dat
             params.extend([int(raw_q), f"%{raw_q}%"])
         else:
             cq = raw_q.lstrip("@").lower()
-            where.append("(LOWER(COALESCE(u.username,'')) LIKE ? OR LOWER(COALESCE(u.name,'')) LIKE ? OR LOWER(p.item_id) LIKE ? OR LOWER(p.charge_id) LIKE ?)")
+            where.append(
+                "(LOWER(COALESCE(u.username,'')) LIKE ? OR LOWER(COALESCE(u.name,'')) LIKE ? "
+                "OR LOWER(p.item_id) LIKE ? OR LOWER(p.charge_id) LIKE ?)"
+            )
             params.extend([f"%{cq}%", f"%{cq}%", f"%{cq}%", f"%{cq}%"])
     w_sql = " AND ".join(where)
     rows = await arun(
@@ -3605,7 +3711,10 @@ async def admin_payments(q: str = "", limit: int = 40, offset: int = 0, init_dat
         "SELECT provider, COUNT(*) AS cnt, COALESCE(SUM(amount_rub),0) AS rub, COALESCE(SUM(stars),0) AS stars "
         "FROM payments WHERE status='succeeded' GROUP BY provider"
     )
-    by_prov = {s["provider"]: {"count": int(s["cnt"] or 0), "rub": float(s["rub"] or 0), "stars": int(s["stars"] or 0)} for s in summary_rows}
+    by_prov = {
+        s["provider"]: {"count": int(s["cnt"] or 0), "rub": float(s["rub"] or 0), "stars": int(s["stars"] or 0)}
+        for s in summary_rows
+    }
     for r in rows:
         it = CATALOG.get(r.get("item_id") or "")
         r["item_title"] = it["title"] if it else (r.get("item_id") or "")
@@ -3613,7 +3722,9 @@ async def admin_payments(q: str = "", limit: int = 40, offset: int = 0, init_dat
 
 
 @app.get("/api/admin/requests")
-async def admin_requests(status: str = "open", limit: int = 40, offset: int = 0, init_data: str = "", x_init_data: str = Header(default="")):
+async def admin_requests(
+    status: str = "open", limit: int = 40, offset: int = 0, init_data: str = "", x_init_data: str = Header(default="")
+):
     require_admin(x_init_data or init_data)
     lim = max(1, min(int(limit or 40), 100))
     off = max(0, int(offset or 0))
@@ -3639,7 +3750,9 @@ class AdminRequestUpdate(BaseModel):
 
 
 @app.post("/api/admin/requests/{req_id}")
-async def admin_update_request(req_id: int, r: AdminRequestUpdate, init_data: str = "", x_init_data: str = Header(default="")):
+async def admin_update_request(
+    req_id: int, r: AdminRequestUpdate, init_data: str = "", x_init_data: str = Header(default="")
+):
     admin = require_admin(x_init_data or init_data)
     rows = await arun("SELECT * FROM support_requests WHERE id=?", (req_id,))
     if not rows:
@@ -3672,7 +3785,9 @@ async def admin_update_request(req_id: int, r: AdminRequestUpdate, init_data: st
 
 
 @app.get("/api/admin/logs")
-async def admin_logs(level: str = "", q: str = "", limit: int = 60, offset: int = 0, init_data: str = "", x_init_data: str = Header(default="")):
+async def admin_logs(
+    level: str = "", q: str = "", limit: int = 60, offset: int = 0, init_data: str = "", x_init_data: str = Header(default="")
+):
     require_admin(x_init_data or init_data)
     lim = max(1, min(int(limit or 60), 150))
     off = max(0, int(offset or 0))
@@ -3690,7 +3805,9 @@ async def admin_logs(level: str = "", q: str = "", limit: int = 60, offset: int 
             where.append("(LOWER(event) LIKE ? OR LOWER(details) LIKE ?)")
             params.extend([f"%{raw_q.lower()}%", f"%{raw_q.lower()}%"])
     w_sql = " AND ".join(where)
-    rows = await arun(f"SELECT * FROM bot_logs WHERE {w_sql} ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?", tuple([*params, lim, off]))
+    rows = await arun(
+        f"SELECT * FROM bot_logs WHERE {w_sql} ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?", tuple([*params, lim, off])
+    )
     return {"logs": rows, "retention_days": LOG_RETENTION_DAYS}
 
 
@@ -3702,15 +3819,12 @@ async def admin_prune_logs_now(init_data: str = "", x_init_data: str = Header(de
     return {"ok": True}
 
 
-
-
 @app.get("/api/admin/users/{uid}/detail")
 async def admin_user_detail(uid: int, init_data: str = "", x_init_data: str = Header(default="")):
     require_admin(x_init_data or init_data)
     rows = await arun("SELECT * FROM users WHERE id=?", (uid,))
     if not rows:
         raise HTTPException(404, "Пользователь не найден")
-    u = rows[0]
     pays = await arun("SELECT * FROM payments WHERE uid=? ORDER BY ts DESC LIMIT 15", (uid,))
     reqs = await arun("SELECT * FROM support_requests WHERE uid=? ORDER BY created_at DESC LIMIT 15", (uid,))
     actions = await arun("SELECT * FROM admin_actions WHERE target_uid=? ORDER BY ts DESC LIMIT 15", (uid,))
@@ -3719,7 +3833,7 @@ async def admin_user_detail(uid: int, init_data: str = "", x_init_data: str = He
         (uid,),
     )
     return {
-        "user": _serialize_admin_user(u),
+        "user": _serialize_admin_user(rows[0]),
         "last_ai_ts": int((last_ai[0] or {}).get("last_ai_ts") or 0),
         "payments": pays,
         "requests": reqs,
@@ -3730,12 +3844,11 @@ async def admin_user_detail(uid: int, init_data: str = "", x_init_data: str = He
 @app.get("/api/admin/ai-health")
 async def admin_ai_health(init_data: str = "", x_init_data: str = Header(default="")):
     require_admin(x_init_data or init_data)
-    free_targets = _free_fallback_targets()
     providers = []
     if AI_KEY:
         for mod in _model_candidates():
             providers.append({"name": "Gemini", "model": mod, "configured": True})
-    for label, _k, _u, mod in free_targets:
+    for label, _k, _u, mod in _free_fallback_targets():
         providers.append({"name": label, "model": mod, "configured": True})
     if OPENAI_API_KEY:
         providers.append({"name": "OpenAI", "model": OPENAI_MODEL, "configured": True})
@@ -3848,8 +3961,11 @@ async def admin_export_users_csv(init_data: str = "", x_init_data: str = Header(
             str(r.get("last_seen") or 0),
         ]
         lines.append(",".join(vals))
-    csv_body = "\n".join(lines)
-    return PlainTextResponse(csv_body, media_type="text/csv; charset=utf-8", headers={"Content-Disposition": "attachment; filename=snapeat_users.csv"})
+    return PlainTextResponse(
+        "\n".join(lines),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=snapeat_users.csv"},
+    )
 
 
 @app.get("/api/admin/export/payments.csv")
@@ -3873,8 +3989,12 @@ async def admin_export_payments_csv(init_data: str = "", x_init_data: str = Head
             str(r.get("ts") or 0),
         ]
         lines.append(",".join(vals))
-    csv_body = "\n".join(lines)
-    return PlainTextResponse(csv_body, media_type="text/csv; charset=utf-8", headers={"Content-Disposition": "attachment; filename=snapeat_payments.csv"})
+    return PlainTextResponse(
+        "\n".join(lines),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=snapeat_payments.csv"},
+    )
+
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
@@ -3889,6 +4009,8 @@ async def health():
         "database": "postgresql",
         "webhook": bool(BASE_URL),
         "gemini": bool(AI_KEY),
+        "ai_relay": bool(AI_RELAY_URL),
+        "ai_relay_models": AI_RELAY_MODELS if AI_RELAY_URL else [],
         "proxyapi": bool(PROXYAPI_API_KEY),
         "proxyapi_priority": PROXYAPI_PRIORITY,
         "proxyapi_models": PROXYAPI_MODELS if PROXYAPI_API_KEY else [],
