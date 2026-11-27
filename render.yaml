@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: snapeat-bot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: BOT_TOKEN
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: WEBAPP_URL
+        sync: false
+      - key: ADMIN_IDS
+        sync: false
+      - key: AI_RELAY_URL
+        sync: false
+      - key: RELAY_SECRET
+        sync: false
+      - key: AI_RELAY_MODELS
+        value: ""
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: FREE_FALLBACK_API_KEY
+        sync: false
