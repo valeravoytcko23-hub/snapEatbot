@@ -2523,6 +2523,7 @@ async def _handle_chat_food_query(
         "uid": uid,
         "day": local_dt.date().isoformat(),
         "meal": _guess_meal_by_hour(local_dt.hour),
+        "src": "photo" if image_data_url else "bot_chat",
         "items": items,
         "exp": time.time() + 1800,
     }
@@ -3656,6 +3657,8 @@ async def admin_stats(force: int = 0, init_data: str = "", x_init_data: str = He
         "total_logs": int(log_agg["total_logs"] or 0),
         "errors_24h": int(log_agg["errors_24h"] or 0),
         "log_retention_days": LOG_RETENTION_DAYS,
+        "entries_24h": int((await arun("SELECT COUNT(*) AS c FROM entries WHERE ts >= ?", ((now_ts - 86400) * 1000,)))[0]["c"] or 0),
+        "avg_entry_kcal": float((await arun("SELECT COALESCE(AVG(kcal), 0) AS a FROM entries WHERE ts >= ?", ((now_ts - 86400) * 1000,)))[0]["a"] or 0),
         "daily_chart": daily_chart,
     }
     _admin_stats_cache = (now_ts, res)
@@ -4014,8 +4017,15 @@ async def admin_user_detail(uid: int, init_data: str = "", x_init_data: str = He
         "SELECT MAX(ts) AS last_ai_ts FROM entries WHERE uid=? AND src IN ('text','photo','bot_chat')",
         (uid,),
     )
+    u_row = rows[0]
+    ser_u = _serialize_admin_user(u_row)
+    ser_u["p"] = u_row.get("p")
+    ser_u["f"] = u_row.get("f")
+    ser_u["c"] = u_row.get("c")
+    e_cnt = (await arun("SELECT COUNT(*) AS c FROM entries WHERE uid=?", (uid,)))[0]["c"]
     return {
-        "user": _serialize_admin_user(rows[0]),
+        "user": ser_u,
+        "entries_count": int(e_cnt or 0),
         "last_ai_ts": int((last_ai[0] or {}).get("last_ai_ts") or 0),
         "payments": pays,
         "requests": reqs,
