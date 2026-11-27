@@ -133,6 +133,8 @@ FREE_FALLBACK_8_MODELS = [
 ]
 
 PROXYAPI_API_KEY = (os.getenv("PROXYAPI_API_KEY") or "").strip()
+PROXYAPI_PRIORITY = (os.getenv("PROXYAPI_PRIORITY") or ("1" if (os.getenv("PROXYAPI_API_KEY") or "").strip() else "0")).strip().lower() in ("1", "true", "yes", "on")
+
 PROXYAPI_BASE_URL = (os.getenv("PROXYAPI_BASE_URL") or "https://api.proxyapi.ru/v1/chat/completions").strip()
 PROXYAPI_MODELS = [
     m.strip()
@@ -488,15 +490,25 @@ def init_db():
     run("CREATE INDEX IF NOT EXISTS ix_user_combos_uid ON user_combos(uid, id DESC)")
 
 
-for _db_attempt in range(5):
-    try:
-        init_db()
-        break
-    except Exception as _db_err:
-        if _db_attempt == 4:
-            raise
-        log.warning("Database init retry %d/5: %s", _db_attempt + 1, _db_err)
-        time.sleep(2.0)
+def ensure_db_ready(retries: int = 5, delay: float = 1.0):
+    last_err = None
+    for attempt in range(1, retries + 1):
+        try:
+            init_db()
+            return
+        except Exception as err:
+            last_err = err
+            if attempt < retries:
+                log.warning("Database init retry %d/%d: %s", attempt, retries, err)
+                time.sleep(delay)
+    if last_err is not None:
+        raise last_err
+
+
+try:
+    ensure_db_ready(retries=3, delay=0.5)
+except Exception as _db_err:
+    log.warning("Initial DB init deferred to lifespan/requests: %s", _err(_db_err))
 
 
 def _normalize_username(raw_username: str) -> str:
@@ -1069,6 +1081,12 @@ async def _call_openai_compatible(
     raise RuntimeError(f"{provider_name}: исчерпаны попытки")
 
 
+def _proxyapi_targets() -> list[tuple[str, str, str, str]]:
+    if not (PROXYAPI_API_KEY and PROXYAPI_BASE_URL and PROXYAPI_MODELS):
+        return []
+    return [("ProxyAPI", PROXYAPI_API_KEY, PROXYAPI_BASE_URL, m) for m in PROXYAPI_MODELS]
+
+
 def _free_fallback_targets() -> list[tuple[str, str, str, str]]:
     slots = [
         ("Бесплатный резерв 1", FREE_FALLBACK_API_KEY, FREE_FALLBACK_BASE_URL, FREE_FALLBACK_MODELS),
@@ -1081,6 +1099,8 @@ def _free_fallback_targets() -> list[tuple[str, str, str, str]]:
         ("Бесплатный резерв 8", FREE_FALLBACK_8_API_KEY, FREE_FALLBACK_8_BASE_URL, FREE_FALLBACK_8_MODELS),
     ]
     targets = []
+    if PROXYAPI_PRIORITY:
+        targets.extend(_proxyapi_targets())
     for label, key, url, models in slots:
         if key and url and models:
             for m in models:
@@ -1088,9 +1108,8 @@ def _free_fallback_targets() -> list[tuple[str, str, str, str]]:
     if GROQ_API_KEY and GROQ_BASE_URL and GROQ_MODELS:
         for m in GROQ_MODELS:
             targets.append(("Groq", GROQ_API_KEY, GROQ_BASE_URL, m))
-    if PROXYAPI_API_KEY and PROXYAPI_BASE_URL and PROXYAPI_MODELS:
-        for m in PROXYAPI_MODELS:
-            targets.append(("ProxyAPI", PROXYAPI_API_KEY, PROXYAPI_BASE_URL, m))
+    if not PROXYAPI_PRIORITY:
+        targets.extend(_proxyapi_targets())
     return targets
 
 
@@ -1132,10 +1151,35 @@ async def _call_openai_fallback(system_prompt: str, parts: list, temp: float = 0
 
 
 async def _call_gemini_raw(system_prompt: str, parts: list, schema: dict, temp: float = 0.2, timeout_sec: float = 45.0) -> str:
+    proxy_targets = _proxyapi_targets() if PROXYAPI_PRIORITY else []
     has_free = bool(_free_fallback_targets())
-    has_any_fallback = has_free or bool(OPENAI_API_KEY)
+    has_any_fallback = has_free or bool(OPENAI_API_KEY) or bool(proxy_targets)
     if not AI_KEY and not has_any_fallback:
-        raise HTTPException(503, "ИИ не настроен: задайте GEMINI_API_KEY, бесплатный резерв или OPENAI_API_KEY")
+        raise HTTPException(503, "ИИ не настроен: задайте PROXYAPI_API_KEY, GEMINI_API_KEY, бесплатный резерв или OPENAI_API_KEY")
+
+    primary_err = None
+    last_err = "ИИ временно перегружен, попробуйте через минуту"
+    _has_img = any("inline_data" in p for p in parts)
+
+    if proxy_targets:
+        for _lbl, p_key, p_url, p_mod in proxy_targets:
+            try:
+                return await _call_openai_compatible(
+                    p_url,
+                    p_key,
+                    p_mod,
+                    f"ProxyAPI ({p_mod})",
+                    system_prompt,
+                    parts,
+                    temp=temp,
+                    use_json_format=False,
+                )
+            except Exception as pe:
+                err_txt = f"ProxyAPI/{p_mod}: {_err(pe)}"
+                if not primary_err:
+                    primary_err = err_txt
+                last_err = err_txt
+                log.warning("Priority ProxyAPI failed (%s): %s", p_mod, _err(pe))
 
     body = {
         "system_instruction": {"parts": [{"text": system_prompt}]},
@@ -1149,9 +1193,6 @@ async def _call_gemini_raw(system_prompt: str, parts: list, schema: dict, temp: 
     }
     modes = ["bearer", "query"] if AI_KEY.startswith("AQ.") else ["query"]
     models = _model_candidates() if AI_KEY else []
-    primary_err = None
-    last_err = "ИИ временно перегружен, попробуйте через минуту"
-
     async with _ai_sem:
         if models:
             async with httpx.AsyncClient(timeout=timeout_sec) as cl:
@@ -2422,12 +2463,13 @@ async def reminder_loop():
             log.warning("reminder_loop error: %s", _err(e))
 
 
-ALLOWED_UPDATES = ["message", "pre_checkout_query"]
+ALLOWED_UPDATES = ["message", "callback_query", "pre_checkout_query"]
 
 
 @asynccontextmanager
 async def lifespan(app):
     global BOT_USERNAME
+    await asyncio.to_thread(ensure_db_ready, 5, 1.0)
     await asyncio.to_thread(prune_old_logs)
     if not BOT_USERNAME:
         try:
@@ -3836,6 +3878,9 @@ async def health():
         "database": "postgresql",
         "webhook": bool(BASE_URL),
         "gemini": bool(AI_KEY),
+        "proxyapi": bool(PROXYAPI_API_KEY),
+        "proxyapi_priority": PROXYAPI_PRIORITY,
+        "proxyapi_models": PROXYAPI_MODELS if PROXYAPI_API_KEY else [],
         "free_fallback": bool(free_targets),
         "free_fallback_count": len(free_targets),
         "free_fallback_models": [t[3] for t in free_targets],

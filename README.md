@@ -17,3 +17,11 @@
 1. Установите зависимости: `pip install -r requirements.txt`.
 2. Задайте переменные окружения: `BOT_TOKEN`, `DATABASE_URL`, `WEBAPP_URL`, `ADMIN_IDS`, а также ключи ИИ (`GEMINI_API_KEY`, `GROQ_API_KEY`, `FREE_FALLBACK_API_KEY` / `OPENROUTER_API_KEY` или `OPENAI_API_KEY`).
 3. Запустите приложение: `uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}`.
+
+## Настройка ProxyAPI (Claude и другие модели)
+1. Задайте переменные окружения:
+   - `PROXYAPI_API_KEY` — ваш ключ из личного кабинета ProxyAPI.
+   - `PROXYAPI_BASE_URL` — `https://api.proxyapi.ru/v1/chat/completions` (по умолчанию уже задан).
+   - `PROXYAPI_MODELS` — список моделей через запятую, например `anthropic/claude-haiku-4-5` (сверьте актуальный ID модели в документации ProxyAPI).
+   - `PROXYAPI_PRIORITY` — `1` (включено по умолчанию при наличии `PROXYAPI_API_KEY`), чтобы запросы шли через ProxyAPI в первую очередь с автоматическим откатом на остальные настроенные слоты.
+2. Проверьте `/health` и вкладку **Сводка -> AI Health & слоты** в `/admin`.
