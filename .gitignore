@@ -1,29 +1,43 @@
-# Секреты и переменные окружения
-.env
-.env.*
-!.env.example
-
-# Python и виртуальные окружения
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
+
+# C extensions
 *.so
-*.egg-info/
-dist/
-build/
+
+# Virtual environments & packaging
+.env
+.env.*
+!.env.example
 .venv/
 venv/
+ENV/
 env/
+build/
+dist/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Локальные бэкапы, БД и временные файлы проекта
-snapeat_backups/
-*.db
-*.sqlite
-*.sqlite3
-*.log
+# Testing & linters / type checkers
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
 
-# IDE и системный мусор
+# Editors & OS files
 .vscode/
 .idea/
+*.swp
+*.swo
 .DS_Store
 Thumbs.db
+
+# Runtime logs, backups & local temp artifacts
+*.log
+/tmp/
+snapeat_backups/
+*.csv
+*.bak
