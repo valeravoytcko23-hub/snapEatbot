@@ -559,6 +559,32 @@ def init_db():
     )
     run("CREATE INDEX IF NOT EXISTS ix_user_combos_uid ON user_combos(uid, id DESC)")
 
+    run(
+        """CREATE TABLE IF NOT EXISTS promocodes(
+        code VARCHAR(40) PRIMARY KEY,
+        reward_type VARCHAR(20) NOT NULL DEFAULT 'pro_days',
+        reward_value INT NOT NULL DEFAULT 30,
+        max_uses INT NOT NULL DEFAULT 1,
+        used_count INT NOT NULL DEFAULT 0,
+        expires_at BIGINT DEFAULT 0,
+        is_active INT NOT NULL DEFAULT 1,
+        created_by BIGINT DEFAULT 0,
+        created_at BIGINT NOT NULL
+    )"""
+    )
+    run("CREATE INDEX IF NOT EXISTS ix_promocodes_created ON promocodes(created_at DESC)")
+
+    run(
+        """CREATE TABLE IF NOT EXISTS promo_redemptions(
+        id BIGSERIAL PRIMARY KEY,
+        code VARCHAR(40) NOT NULL,
+        uid BIGINT NOT NULL,
+        redeemed_at BIGINT NOT NULL,
+        UNIQUE(code, uid)
+    )"""
+    )
+    run("CREATE INDEX IF NOT EXISTS ix_promo_redemptions_uid ON promo_redemptions(uid, redeemed_at DESC)")
+
 
 def ensure_db_ready(retries: int = 5, delay: float = 1.0):
     last_err = None
@@ -2046,11 +2072,12 @@ def refund_ai_quota(uid: int, source: str, period_month: str):
                     )
             elif source == "extra":
                 cur.execute(
-                    _pg_sql(
-                        "UPDATE users SET extra_ai_credits=COALESCE(extra_ai_credits,0)+1, "
-                        "ai_n=GREATEST(COALESCE(ai_n,0)-1,0) WHERE id=?"
-                    ),
+                    _pg_sql("UPDATE users SET extra_ai_credits=COALESCE(extra_ai_credits,0)+1 WHERE id=?"),
                     (uid,),
+                )
+                cur.execute(
+                    _pg_sql("UPDATE users SET ai_n=GREATEST(COALESCE(ai_n,0)-1,0) WHERE id=? AND ai_day=?"),
+                    (uid, today_str),
                 )
 
     _run_in_conn(_op)
@@ -3778,7 +3805,7 @@ async def admin_user_action(r: AdminSubActionReq, init_data: str = "", x_init_da
             notify_msg = f"🥗 Вам начислено +{r.amount} билетов на ИИ-рацион! Текущий баланс: {new_m}."
         log_detail = f"add_mealplan {r.amount:+d} (now {new_m})"
     elif r.action == "reset_limits":
-        await arun("UPDATE users SET trial_used=0, ai_n=0, pro_month_used=0, free_mealplan_used=0 WHERE id=?", (uid,))
+        await arun("UPDATE users SET trial_used=0, ai_n=0, ai_day='', pro_month_used=0, free_mealplan_used=0 WHERE id=?", (uid,))
         log_detail = "reset_limits"
 
     global _admin_stats_cache
@@ -4218,6 +4245,187 @@ async def admin_export_payments_csv(init_data: str = "", x_init_data: str = Head
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": "attachment; filename=snapeat_payments.csv"},
     )
+
+
+
+class PromoRedeemReq(BaseModel):
+    code: str = Field(min_length=2, max_length=40)
+
+
+@app.post("/api/promo/redeem")
+async def redeem_promo(r: PromoRedeemReq, init_data: str = "", x_init_data: str = Header(default="")):
+    tu = auth(x_init_data or init_data)
+    u = await asyncio.to_thread(get_user, tu["id"], tu.get("first_name", ""), None, tu.get("username", ""))
+    uid = int(u["id"])
+    clean_code = re.sub(r"[^A-Za-z0-9_-]", "", (r.code or "").strip().upper())
+    if len(clean_code) < 2:
+        raise HTTPException(400, "Введите корректный промокод")
+
+    now_ts = int(time.time())
+
+    def _op(conn):
+        with conn.cursor() as cur:
+            cur.execute(_pg_sql("SELECT * FROM promocodes WHERE code=? FOR UPDATE"), (clean_code,))
+            promo = cur.fetchone()
+            if not promo:
+                return ("not_found", None)
+            if int(promo.get("is_active") or 0) != 1:
+                return ("inactive", None)
+            exp_at = int(promo.get("expires_at") or 0)
+            if exp_at > 0 and now_ts > exp_at:
+                return ("expired", None)
+            max_u = int(promo.get("max_uses") or 0)
+            used_c = int(promo.get("used_count") or 0)
+            if max_u > 0 and used_c >= max_u:
+                return ("exhausted", None)
+
+            cur.execute(_pg_sql("SELECT id FROM promo_redemptions WHERE code=? AND uid=?"), (clean_code, uid))
+            if cur.fetchone():
+                return ("already_used", None)
+
+            cur.execute(
+                _pg_sql("INSERT INTO promo_redemptions(code, uid, redeemed_at) VALUES(?,?,?)"),
+                (clean_code, uid, now_ts),
+            )
+            cur.execute(
+                _pg_sql("UPDATE promocodes SET used_count = COALESCE(used_count, 0) + 1 WHERE code=?"),
+                (clean_code,),
+            )
+
+            rtype = promo.get("reward_type") or "pro_days"
+            rval = max(1, int(promo.get("reward_value") or 1))
+            if rtype == "pro_days":
+                cur.execute(_pg_sql("SELECT pro_until FROM users WHERE id=? FOR UPDATE"), (uid,))
+                urow = cur.fetchone()
+                cur_until = int((urow["pro_until"] if urow else 0) or 0)
+                new_until = int(max(now_ts, cur_until) + rval * 86400)
+                cur.execute(
+                    _pg_sql("UPDATE users SET pro_until=?, pro_exp_warn_3d=0, pro_exp_warn_0d=0 WHERE id=?"),
+                    (new_until, uid),
+                )
+                return ("ok", {"reward_type": rtype, "reward_value": rval, "pro_until": new_until})
+            elif rtype == "ai_credits":
+                cur.execute(
+                    _pg_sql("UPDATE users SET extra_ai_credits = COALESCE(extra_ai_credits, 0) + ? WHERE id=?"),
+                    (rval, uid),
+                )
+                return ("ok", {"reward_type": rtype, "reward_value": rval})
+            elif rtype == "mealplan":
+                cur.execute(
+                    _pg_sql("UPDATE users SET mealplan_credits = COALESCE(mealplan_credits, 0) + ? WHERE id=?"),
+                    (rval, uid),
+                )
+                return ("ok", {"reward_type": rtype, "reward_value": rval})
+            return ("invalid_type", None)
+
+    status, info = await asyncio.to_thread(_run_in_conn, _op)
+    if status == "not_found":
+        raise HTTPException(404, "Промокод не найден")
+    if status == "inactive":
+        raise HTTPException(400, "Этот промокод отключён")
+    if status == "expired":
+        raise HTTPException(400, "Срок действия промокода истёк")
+    if status == "exhausted":
+        raise HTTPException(400, "Лимит активаций этого промокода исчерпан")
+    if status == "already_used":
+        raise HTTPException(400, "Вы уже активировали этот промокод")
+    if status != "ok":
+        raise HTTPException(400, "Не удалось активировать промокод")
+
+    global _admin_stats_cache
+    _admin_stats_cache = None
+    rtype = info["reward_type"]
+    rval = info["reward_value"]
+    if rtype == "pro_days":
+        dt_str = datetime.fromtimestamp(info["pro_until"], tz=timezone.utc).strftime("%d.%m.%Y")
+        msg = f"Промокод {clean_code} активирован! Подписка SnapEat Pro активна до {dt_str} (+{rval} дн.)."
+    elif rtype == "ai_credits":
+        msg = f"Промокод {clean_code} активирован! Начислено +{rval} ИИ-запросов."
+    else:
+        msg = f"Промокод {clean_code} активирован! Начислено +{rval} билетов на ИИ-рацион."
+
+    await adb_log("INFO", "promo_redeemed", f"code={clean_code} {rtype}={rval}", uid)
+    return {"ok": True, "code": clean_code, "message": msg, **info}
+
+
+class AdminPromoCreateReq(BaseModel):
+    code: str = Field(min_length=2, max_length=40)
+    reward_type: Literal["pro_days", "ai_credits", "mealplan"] = "pro_days"
+    reward_value: int = Field(30, ge=1, le=3650)
+    max_uses: int = Field(10, ge=1, le=100000)
+    valid_hours: int = Field(0, ge=0, le=87600)
+
+
+@app.get("/api/admin/promos")
+async def admin_list_promos(init_data: str = "", x_init_data: str = Header(default="")):
+    require_admin(x_init_data or init_data)
+    now_ts = int(time.time())
+    rows = await arun("SELECT * FROM promocodes ORDER BY created_at DESC LIMIT 100")
+    out = []
+    for r in rows:
+        exp_at = int(r.get("expires_at") or 0)
+        max_u = int(r.get("max_uses") or 0)
+        used_c = int(r.get("used_count") or 0)
+        is_act = int(r.get("is_active") or 0) == 1
+        expired = exp_at > 0 and now_ts > exp_at
+        exhausted = max_u > 0 and used_c >= max_u
+        out.append({
+            **r,
+            "is_active": is_act,
+            "is_expired": expired,
+            "is_exhausted": exhausted,
+            "is_valid_now": is_act and (not expired) and (not exhausted),
+        })
+    return {"promos": out}
+
+
+@app.post("/api/admin/promos")
+async def admin_create_promo(r: AdminPromoCreateReq, init_data: str = "", x_init_data: str = Header(default="")):
+    admin = require_admin(x_init_data or init_data)
+    clean_code = re.sub(r"[^A-Za-z0-9_-]", "", (r.code or "").strip().upper())
+    if len(clean_code) < 2:
+        raise HTTPException(400, "Промокод должен содержать минимум 2 символа (латиница, цифры, - или _)")
+    existing = await arun("SELECT code FROM promocodes WHERE code=?", (clean_code,))
+    if existing:
+        raise HTTPException(409, f"Промокод {clean_code} уже существует")
+
+    now_ts = int(time.time())
+    expires_at = (now_ts + int(r.valid_hours) * 3600) if int(r.valid_hours or 0) > 0 else 0
+    await arun(
+        "INSERT INTO promocodes(code, reward_type, reward_value, max_uses, used_count, expires_at, is_active, created_by, created_at) "
+        "VALUES(?,?,?,?,0,?,1,?,?)",
+        (clean_code, r.reward_type, int(r.reward_value), int(r.max_uses), expires_at, int(admin["id"]), now_ts),
+    )
+    await adb_log(
+        "INFO",
+        "admin_promo_created",
+        f"admin={admin['id']} code={clean_code} type={r.reward_type} val={r.reward_value} uses={r.max_uses} hours={r.valid_hours}",
+        int(admin["id"]),
+    )
+    return {"ok": True, "code": clean_code}
+
+
+@app.post("/api/admin/promos/{code}/toggle")
+async def admin_toggle_promo(code: str, init_data: str = "", x_init_data: str = Header(default="")):
+    admin = require_admin(x_init_data or init_data)
+    clean_code = re.sub(r"[^A-Za-z0-9_-]", "", (code or "").strip().upper())
+    rows = await arun("SELECT * FROM promocodes WHERE code=?", (clean_code,))
+    if not rows:
+        raise HTTPException(404, "Промокод не найден")
+    new_state = 0 if int(rows[0].get("is_active") or 0) == 1 else 1
+    await arun("UPDATE promocodes SET is_active=? WHERE code=?", (new_state, clean_code))
+    await adb_log("INFO", "admin_promo_toggle", f"admin={admin['id']} code={clean_code} active={new_state}", int(admin["id"]))
+    return {"ok": True, "is_active": bool(new_state)}
+
+
+@app.delete("/api/admin/promos/{code}")
+async def admin_delete_promo(code: str, init_data: str = "", x_init_data: str = Header(default="")):
+    admin = require_admin(x_init_data or init_data)
+    clean_code = re.sub(r"[^A-Za-z0-9_-]", "", (code or "").strip().upper())
+    await arun("DELETE FROM promo_redemptions WHERE code=?", (clean_code,))
+    await arun("DELETE FROM promocodes WHERE code=?", (clean_code,))
+    await adb_log("INFO", "admin_promo_delete", f"admin={admin['id']} code={clean_code}", int(admin["id"]))
+    return {"ok": True}
 
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
